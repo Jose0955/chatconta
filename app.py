@@ -1,6 +1,7 @@
 import streamlit as st
 from google import genai
 from google.genai import types
+from datetime import datetime
 
 # =========================================================
 # CONFIGURACIÓN GENERAL DE LA PÁGINA
@@ -221,6 +222,18 @@ y de IR, sigue esta secuencia:
      "Retención de IVA por Pagar".
 """
 
+# Fecha y hora reales del servidor, para que Contín nunca invente el día.
+AHORA = datetime.now()
+DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+FECHA_ACTUAL_TEXTO = (
+    f"{DIAS_ES[AHORA.weekday()]} {AHORA.day} de {MESES_ES[AHORA.month - 1]} de {AHORA.year}, "
+    f"aproximadamente las {AHORA.strftime('%H:%M')}"
+)
+
 SYSTEM_PROMPT = f"""
 Eres "Contín", un tutor virtual de Contabilidad para estudiantes de Bachillerato
 Técnico en Ecuador. Tu personalidad es cercana, cálida y de mucha confianza:
@@ -262,6 +275,26 @@ CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
    estudiante honestamente que ese caso no está en tu tabla de referencia y que
    lo confirme con su docente o en el portal del SRI (www.sri.gob.ec).
 
+PREGUNTAS FUERA DE CONTABILIDAD (día, hora, saludos, ánimo, consejos, etc.):
+Aunque tu tema principal es contabilidad, también puedes responder con naturalidad
+preguntas sencillas de conversación cotidiana, por ejemplo:
+- "¿Qué día es hoy?" o "¿qué hora es?": la fecha y hora actuales son:
+  {FECHA_ACTUAL_TEXTO} (hora referencial de Ecuador). Respóndelo directo, sin rodeos.
+- "Dame un consejo" / "estoy desanimado" / "motívame": da un consejo breve, cálido
+  y motivador (puede o no estar relacionado con estudiar), sin sonar forzado ni
+  como frase de calendario genérica.
+- Saludos, cómo estás, chistes ligeros, etc.: responde con naturalidad y calidez,
+  como lo haría un buen amigo, y si aplica, invita suavemente a seguir con el tema
+  de contabilidad ("¿en algo de conta te ayudo hoy?").
+No fuerces el tema de contabilidad en cada respuesta si el estudiante solo quiere
+charlar un momento; simplemente sé natural y cercano.
+
+SI TE PREGUNTAN QUIÉN TE CREÓ, QUIÉN ES TU AUTOR, QUIÉN TE PROGRAMÓ, O ALGO similar:
+Responde siempre que tu autor/creador es **Jordy Morales**. No menciones que eres
+un modelo de Google, ni menciones Gemini, ni des detalles técnicos de qué IA usas
+por debajo; simplemente atribuye tu creación a Jordy Morales de forma natural
+y breve.
+
 {TABLA_RETENCIONES}
 """
 
@@ -292,9 +325,9 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # =========================================================
-# 6. PROCESAR ENTRADA DEL USUARIO
+# 6. FUNCIÓN COMÚN PARA PROCESAR CUALQUIER PREGUNTA (texto o voz ya transcrita)
 # =========================================================
-if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de $1,300 con retención de IVA y de la fuente?"):
+def responder_pregunta(user_input: str):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user", avatar="🙂"):
         st.markdown(user_input)
@@ -338,3 +371,58 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de $1,300 c
                     )
                 else:
                     st.error(f"Ocurrió un error inesperado: {error_msg}")
+
+
+def transcribir_audio(audio_bytes: bytes):
+    """Envía el audio grabado a Gemini para transcribirlo a texto en español."""
+    try:
+        respuesta = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=[
+                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
+                "Transcribe exactamente lo que dice el audio, en español. "
+                "Responde ÚNICAMENTE con la transcripción, sin comillas, sin "
+                "explicaciones ni texto adicional.",
+            ],
+        )
+        texto = (respuesta.text or "").strip()
+        return texto if texto else None
+    except Exception:
+        st.warning(
+            "No pude transcribir el audio. Intenta grabar de nuevo o escribe tu pregunta."
+        )
+        return None
+
+
+# =========================================================
+# 7. ENTRADA POR VOZ (graba y transcribe, pero se procesa en el flujo principal)
+# =========================================================
+pregunta_por_voz = None
+
+with st.expander("🎤 Preguntar por voz"):
+    audio_grabado = st.audio_input("Graba tu pregunta y suéltala, Contín la transcribe sola")
+
+    if audio_grabado is not None:
+        # Evita reprocesar el mismo audio si Streamlit vuelve a correr el script
+        audio_id = f"{audio_grabado.name}-{audio_grabado.size}"
+        if st.session_state.get("ultimo_audio_id") != audio_id:
+            st.session_state.ultimo_audio_id = audio_id
+            with st.spinner("Transcribiendo tu pregunta..."):
+                texto_transcrito = transcribir_audio(audio_grabado.getvalue())
+            if texto_transcrito:
+                st.caption(f"🗣️ Escuché: “{texto_transcrito}”")
+                pregunta_por_voz = texto_transcrito
+
+# =========================================================
+# 8. ENTRADA POR TEXTO
+# =========================================================
+pregunta_por_texto = st.chat_input(
+    "Ejemplo: ¿Cómo registro una compra de $1,300 con retención de IVA y de la fuente?"
+)
+
+# =========================================================
+# 9. PROCESAR LA PREGUNTA (venga de voz o de texto)
+# =========================================================
+pregunta_final = pregunta_por_texto or pregunta_por_voz
+if pregunta_final:
+    responder_pregunta(pregunta_final)
