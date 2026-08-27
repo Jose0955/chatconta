@@ -48,8 +48,9 @@ CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
 3. Usa un lenguaje claro, motivador y adaptable al nivel escolar.
 """
 
+# Cambio exacto: uso del nombre de modelo válido y estable 'gemini-1.5-flash-latest'
 model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
+    model_name="gemini-1.5-flash-latest",
     system_instruction=SYSTEM_PROMPT
 )
 
