@@ -32,7 +32,7 @@ if not api_key:
 client = genai.Client(api_key=api_key)
 
 # Nombre del modelo (capa gratuita de Google AI Studio)
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.6-flash"
 
 # =========================================================
 # 2. BARRA LATERAL: SELECCIÓN DE NIVEL Y OPCIONES
@@ -162,7 +162,7 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
 
             except Exception as e:
                 error_msg = str(e)
-                st.error(f"DEBUG - Error completo: {error_msg}")
+
                 if "404" in error_msg:
                     st.error(
                         "❌ El modelo de IA no está disponible. "
