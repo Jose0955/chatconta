@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 st.set_page_config(page_title="ChatConta - Tutor Contable BGU", page_icon="📊")
 st.title("📊 ChatConta: Tutor Virtual de Contabilidad")
@@ -10,7 +11,8 @@ if not api_key:
     st.error("Configura tu API Key de Gemini en los secretos de Streamlit.")
     st.stop()
 
-genai.configure(api_key=api_key)
+# Cliente actualizado de la SDK oficial google-genai
+client = genai.Client(api_key=api_key)
 
 SYSTEM_PROMPT = """
 Eres "ChatConta", un tutor virtual de Inteligencia Artificial especializado en la especialidad de Contabilidad para Bachillerato Técnico (1.º, 2.º y 3.º de BGU).
@@ -48,15 +50,10 @@ CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
 3. Usa un lenguaje claro, motivador y adaptable al nivel escolar.
 """
 
-# Cambio exacto: uso del nombre de modelo válido y estable 'gemini-1.5-flash-latest'
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash-latest",
-    system_instruction=SYSTEM_PROMPT
-)
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Dibujar historial
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -66,15 +63,25 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    history_for_gemini = [
-        {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
-        for m in st.session_state.messages[:-1]
-    ]
-    
-    chat = model.start_chat(history=history_for_gemini)
-    
+    # Formatear el historial para el nuevo SDK
+    contents = []
+    for m in st.session_state.messages:
+        role = "user" if m["role"] == "user" else "model"
+        contents.append(
+            types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=m["content"])]
+            )
+        )
+
     with st.chat_message("assistant"):
-        response = chat.send_message(user_input)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+            )
+        )
         st.markdown(response.text)
         
     st.session_state.messages.append({"role": "assistant", "content": response.text})
