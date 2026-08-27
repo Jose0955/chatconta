@@ -67,15 +67,14 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
 
     with st.chat_message("assistant"):
         try:
-            # Creación de la sesión de chat oficial de la librería google-genai
+            # Cambio a gemini-1.5-flash
             chat = client.chats.create(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                 )
             )
             
-            # Envío directo del mensaje
             response = chat.send_message(user_input)
             st.markdown(response.text)
             st.session_state.messages.append({"role": "assistant", "content": response.text})
