@@ -96,6 +96,8 @@ with st.sidebar:
     if st.button("🗑️ Empezar de nuevo"):
         st.session_state.messages = []
         st.session_state.chat_session = None
+        st.session_state.ultimo_audio_id = None
+        st.session_state.audio_widget_key = st.session_state.get("audio_widget_key", 0) + 1
         st.rerun()
 
 # =========================================================
@@ -379,18 +381,16 @@ def transcribir_audio(audio_bytes: bytes):
         respuesta = client.models.generate_content(
             model=MODEL_NAME,
             contents=[
-                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
                 "Transcribe exactamente lo que dice el audio, en español. "
                 "Responde ÚNICAMENTE con la transcripción, sin comillas, sin "
                 "explicaciones ni texto adicional.",
+                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
             ],
         )
         texto = (respuesta.text or "").strip()
         return texto if texto else None
-    except Exception:
-        st.warning(
-            "No pude transcribir el audio. Intenta grabar de nuevo o escribe tu pregunta."
-        )
+    except Exception as e:
+        st.error(f"No se pudo transcribir el audio. Detalle técnico: {e}")
         return None
 
 
@@ -399,8 +399,14 @@ def transcribir_audio(audio_bytes: bytes):
 # =========================================================
 pregunta_por_voz = None
 
+if "audio_widget_key" not in st.session_state:
+    st.session_state.audio_widget_key = 0
+
 with st.expander("🎤 Preguntar por voz"):
-    audio_grabado = st.audio_input("Graba tu pregunta y suéltala, Contín la transcribe sola")
+    audio_grabado = st.audio_input(
+        "Graba tu pregunta y suéltala, Contín la transcribe sola",
+        key=f"audio_{st.session_state.audio_widget_key}",
+    )
 
     if audio_grabado is not None:
         # Evita reprocesar el mismo audio si Streamlit vuelve a correr el script
