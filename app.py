@@ -11,7 +11,7 @@ if not api_key:
     st.error("Configura tu API Key de Gemini en los secretos de Streamlit.")
     st.stop()
 
-# Cliente actualizado de la SDK oficial google-genai
+# Inicialización del cliente oficial con la API Key de secretos
 client = genai.Client(api_key=api_key)
 
 SYSTEM_PROMPT = """
@@ -53,7 +53,7 @@ CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Dibujar historial
+# Mostrar el historial guardado en la interfaz
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -63,7 +63,7 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Formatear el historial para el nuevo SDK
+    # Construcción de estructura del historial compatible con SDK google-genai
     contents = []
     for m in st.session_state.messages:
         role = "user" if m["role"] == "user" else "model"
@@ -75,8 +75,9 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
         )
 
     with st.chat_message("assistant"):
+        # Se especifica gemini-2.0-flash (modelo válido en la API)
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
