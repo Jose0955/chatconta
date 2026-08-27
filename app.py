@@ -162,6 +162,7 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
 
             except Exception as e:
                 error_msg = str(e)
+                st.error(f"DEBUG - Error completo: {error_msg}")
                 if "404" in error_msg:
                     st.error(
                         "❌ El modelo de IA no está disponible. "
