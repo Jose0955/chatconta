@@ -67,9 +67,9 @@ if user_input := st.chat_input("Ejemplo: ¿Cómo registro una compra de mercader
 
     with st.chat_message("assistant"):
         try:
-            # Cambio a gemini-1.5-flash
+            # Cambio a gemini-2.5-flash
             chat = client.chats.create(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                 )
