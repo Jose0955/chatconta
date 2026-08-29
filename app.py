@@ -2,6 +2,9 @@ import streamlit as st
 from google import genai
 from google.genai import types
 from datetime import datetime
+import pandas as pd
+import io
+from openpyxl.styles import Font
 
 # =========================================================
 # CONFIGURACIÓN GENERAL DE LA PÁGINA
@@ -297,6 +300,29 @@ un modelo de Google, ni menciones Gemini, ni des detalles técnicos de qué IA u
 por debajo; simplemente atribuye tu creación a Jordy Morales de forma natural
 y breve.
 
+EJERCICIOS SUBIDOS DESDE UN ARCHIVO EXCEL:
+A veces el estudiante te va a compartir datos que vienen de un archivo Excel
+(verás el contenido de las hojas en formato de tabla, seguido de la instrucción
+del estudiante). Trátalo igual que cualquier ejercicio contable:
+1. Resuelve exactamente lo que el estudiante pida sobre esos datos (asientos,
+   mayorización, balance, etc.), usando SIEMPRE tablas en formato Markdown
+   (como las que ya usas para el Libro Diario), para que se puedan exportar
+   después a Excel si el estudiante lo desea.
+2. Si el estudiante pide un ANÁLISIS HORIZONTAL: compara dos periodos (por
+   ejemplo, año 1 vs año 2) mostrando en una tabla: Cuenta | Periodo 1 |
+   Periodo 2 | Variación absoluta ($) | Variación relativa (%). La variación
+   relativa se calcula como (Periodo2 - Periodo1) / Periodo1 * 100. Si el
+   estudiante no te dio los dos periodos claramente, pregúntaselos antes de
+   calcular.
+3. Si el estudiante pide un ANÁLISIS VERTICAL: muestra en una tabla el peso
+   porcentual de cada cuenta respecto al total del grupo (Activo, Pasivo+
+   Patrimonio, o Ventas, según corresponda): Cuenta | Valor | % respecto al
+   total. Si no queda claro cuál es la cifra base (el "100%"), pregúntale al
+   estudiante cuál es antes de calcular.
+4. Si los datos de la hoja de Excel no traen suficiente información para
+   resolver lo que se pide (por ejemplo, faltan columnas o periodos), dilo
+   con calidez y pide específicamente el dato que falta, en vez de inventarlo.
+
 {TABLA_RETENCIONES}
 """
 
@@ -319,20 +345,70 @@ if st.session_state.nivel_actual != nivel:
     st.session_state.chat_session = None
 
 # =========================================================
-# 5. MOSTRAR HISTORIAL GUARDADO
+# (el historial se muestra más abajo, después de definir las funciones
+# que dibujan las tablas y el botón de descarga)
 # =========================================================
-for message in st.session_state.messages:
-    avatar = "🤝" if message["role"] == "assistant" else "🙂"
-    with st.chat_message(message["role"], avatar=avatar):
-        st.markdown(message["content"])
 
 # =========================================================
-# 6. FUNCIÓN COMÚN PARA PROCESAR CUALQUIER PREGUNTA (texto o voz ya transcrita)
+# 6. FUNCIÓN COMÚN PARA PROCESAR CUALQUIER PREGUNTA (texto, voz o Excel)
 # =========================================================
-def responder_pregunta(user_input: str):
-    st.session_state.messages.append({"role": "user", "content": user_input})
+def extraer_tablas_markdown(texto: str):
+    """Busca tablas en formato Markdown dentro de una respuesta y las convierte
+    en DataFrames de pandas, para poder exportarlas luego a Excel."""
+    tablas = []
+    lineas = texto.split("\n")
+    i = 0
+    while i < len(lineas):
+        if lineas[i].strip().startswith("|"):
+            bloque = []
+            while i < len(lineas) and lineas[i].strip().startswith("|"):
+                bloque.append(lineas[i].strip())
+                i += 1
+            if len(bloque) >= 2:
+                encabezados = [c.strip(" *") for c in bloque[0].strip("|").split("|")]
+                filas = []
+                for linea in bloque[2:]:  # bloque[1] es la fila separadora (---)
+                    valores = [c.strip(" *") for c in linea.strip("|").split("|")]
+                    if len(valores) == len(encabezados):
+                        filas.append(valores)
+                if filas:
+                    tablas.append(pd.DataFrame(filas, columns=encabezados))
+        else:
+            i += 1
+    return tablas
+
+
+def generar_excel_desde_tablas(tablas):
+    """Convierte una lista de DataFrames en un archivo .xlsx (en memoria) con
+    formato profesional básico: fuente Arial y encabezados en negrita."""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for idx, df in enumerate(tablas, start=1):
+            df.to_excel(writer, sheet_name=f"Tabla {idx}", index=False)
+        for hoja in writer.book.worksheets:
+            for celda in hoja[1]:
+                celda.font = Font(bold=True, name="Arial")
+            for fila in hoja.iter_rows(min_row=2):
+                for celda in fila:
+                    celda.font = Font(name="Arial")
+            for columna in hoja.columns:
+                largo = max((len(str(c.value)) if c.value else 0) for c in columna)
+                hoja.column_dimensions[columna[0].column_letter].width = min(max(largo + 2, 10), 40)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
+    """
+    texto_mostrado: lo que se ve en la burbuja de chat y se guarda en el historial visible.
+    contexto_extra: información adicional (p.ej. datos de un Excel) que se le manda a la IA
+                     PERO no se muestra en el chat, para no llenar la pantalla de datos crudos.
+    """
+    st.session_state.messages.append({"role": "user", "content": texto_mostrado})
     with st.chat_message("user", avatar="🙂"):
-        st.markdown(user_input)
+        st.markdown(texto_mostrado)
+
+    mensaje_para_ia = f"{contexto_extra}\n\nInstrucción del estudiante: {texto_mostrado}" if contexto_extra else texto_mostrado
 
     with st.chat_message("assistant", avatar="🤝"):
         with st.spinner("Contín está pensando cómo explicarte esto..."):
@@ -346,11 +422,23 @@ def responder_pregunta(user_input: str):
                         ),
                     )
 
-                response = st.session_state.chat_session.send_message(user_input)
+                response = st.session_state.chat_session.send_message(mensaje_para_ia)
                 st.markdown(response.text)
                 st.session_state.messages.append(
                     {"role": "assistant", "content": response.text}
                 )
+
+                # Si la respuesta trae tablas, ofrecemos descargarlas en Excel
+                tablas = extraer_tablas_markdown(response.text)
+                if tablas:
+                    excel_bytes = generar_excel_desde_tablas(tablas)
+                    st.download_button(
+                        "📥 Descargar esta respuesta en Excel",
+                        data=excel_bytes,
+                        file_name="contin_resultado.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"descarga_{len(st.session_state.messages)}",
+                    )
 
             except Exception as e:
                 error_msg = str(e)
@@ -394,6 +482,79 @@ def transcribir_audio(audio_bytes: bytes):
         return None
 
 
+def convertir_excel_a_texto(hojas: dict) -> str:
+    """Convierte todas las hojas de un Excel subido en texto (tablas Markdown)
+    para poder incluirlas como contexto en el mensaje a la IA."""
+    partes = ["ARCHIVO EXCEL SUBIDO POR EL ESTUDIANTE:"]
+    for nombre_hoja, df in hojas.items():
+        partes.append(f"\n--- Hoja: {nombre_hoja} ---")
+        partes.append(df.to_markdown(index=False))
+    return "\n".join(partes)
+
+
+# =========================================================
+# 5. SUBIR EJERCICIO EN EXCEL
+# =========================================================
+if "excel_context" not in st.session_state:
+    st.session_state.excel_context = None
+if "excel_pendiente" not in st.session_state:
+    st.session_state.excel_pendiente = False
+if "excel_widget_key" not in st.session_state:
+    st.session_state.excel_widget_key = 0
+
+with st.expander("📎 Subir ejercicio en Excel"):
+    archivo_excel = st.file_uploader(
+        "Sube un archivo .xlsx con tu ejercicio (asientos, balances, estados financieros, etc.)",
+        type=["xlsx", "xls"],
+        key=f"excel_{st.session_state.excel_widget_key}",
+    )
+
+    if archivo_excel is not None:
+        excel_id = f"{archivo_excel.name}-{archivo_excel.size}"
+        if st.session_state.get("ultimo_excel_id") != excel_id:
+            st.session_state.ultimo_excel_id = excel_id
+            try:
+                hojas = pd.read_excel(archivo_excel, sheet_name=None)
+                st.session_state.excel_context = convertir_excel_a_texto(hojas)
+                st.session_state.excel_pendiente = True
+                st.success(
+                    f"✅ Listo, cargué **{archivo_excel.name}** ({len(hojas)} hoja(s)). "
+                    "Ahora escríbeme abajo qué quieres que haga con estos datos — por ejemplo: "
+                    "'resuélveme estos asientos', 'haz un análisis horizontal entre 2023 y 2024', "
+                    "o 'haz el análisis vertical del balance'."
+                )
+                for nombre_hoja, df in hojas.items():
+                    with st.expander(f"👀 Vista previa: {nombre_hoja}"):
+                        st.dataframe(df)
+            except Exception as e:
+                st.error(f"No pude leer el archivo. Detalle técnico: {e}")
+
+    if st.session_state.excel_context is not None:
+        if st.button("🗑️ Quitar este archivo"):
+            st.session_state.excel_context = None
+            st.session_state.excel_pendiente = False
+            st.session_state.excel_widget_key += 1
+            st.rerun()
+
+# =========================================================
+# 6. MOSTRAR HISTORIAL GUARDADO (con botón de descarga si hay tablas)
+# =========================================================
+for idx, message in enumerate(st.session_state.messages):
+    avatar = "🤝" if message["role"] == "assistant" else "🙂"
+    with st.chat_message(message["role"], avatar=avatar):
+        st.markdown(message["content"])
+        if message["role"] == "assistant":
+            tablas_previas = extraer_tablas_markdown(message["content"])
+            if tablas_previas:
+                st.download_button(
+                    "📥 Descargar esta respuesta en Excel",
+                    data=generar_excel_desde_tablas(tablas_previas),
+                    file_name="contin_resultado.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"descarga_historial_{idx}",
+                )
+
+
 # =========================================================
 # 7. ENTRADA POR VOZ (graba y transcribe, pero se procesa en el flujo principal)
 # =========================================================
@@ -427,8 +588,13 @@ pregunta_por_texto = st.chat_input(
 )
 
 # =========================================================
-# 9. PROCESAR LA PREGUNTA (venga de voz o de texto)
+# 9. PROCESAR LA PREGUNTA (venga de voz o de texto, con o sin Excel adjunto)
 # =========================================================
 pregunta_final = pregunta_por_texto or pregunta_por_voz
 if pregunta_final:
-    responder_pregunta(pregunta_final)
+    if st.session_state.excel_pendiente:
+        contexto = st.session_state.excel_context
+        st.session_state.excel_pendiente = False  # solo se usa en el siguiente mensaje
+        responder_pregunta(pregunta_final, contexto_extra=contexto)
+    else:
+        responder_pregunta(pregunta_final)
