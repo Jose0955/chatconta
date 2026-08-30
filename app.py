@@ -444,6 +444,122 @@ def hablar_texto(texto: str):
     )
 
 
+# ---------------------------------------------------------
+# QUIZZES AUTOMÁTICOS 🎯
+# ---------------------------------------------------------
+PROMPT_QUIZ_SISTEMA = """Eres un generador de quizzes de opción múltiple sobre
+contabilidad para estudiantes de Bachillerato Técnico en Ecuador.
+
+Devuelve ÚNICAMENTE un JSON válido (sin texto adicional, sin explicaciones,
+sin marcadores de código como ```), con esta forma EXACTA:
+
+[
+  {"pregunta": "...", "opciones": ["...", "...", "...", "..."], "respuesta_correcta": 0, "explicacion": "..."}
+]
+
+Reglas:
+- TÚ decides cuántas preguntas hacer (entre 3 y 6) según qué tan amplio sea
+  el tema: un tema puntual merece 3 preguntas, un tema amplio puede llegar a 6.
+- Cada pregunta debe tener EXACTAMENTE 4 opciones.
+- "respuesta_correcta" es el índice (0, 1, 2 o 3) de la opción correcta.
+- Las preguntas deben basarse específicamente en el tema/contexto que te den,
+  no en contabilidad en general.
+- "explicacion" es una frase corta (máx. 2 líneas) de por qué esa es la
+  respuesta correcta.
+- No agregues nada fuera del JSON."""
+
+
+def generar_quiz(tema_contexto: str):
+    """Le pide a la IA un quiz en formato JSON sobre el tema dado.
+    Devuelve una lista de preguntas, o None si algo falla."""
+    try:
+        respuesta = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": PROMPT_QUIZ_SISTEMA},
+                {"role": "user", "content": f"Tema/contexto de la clase:\n{tema_contexto}\n\nGenera el quiz."},
+            ],
+        )
+        texto = respuesta.choices[0].message.content.strip()
+        # Por si el modelo igual mete ``` alrededor del JSON, lo limpiamos
+        texto = re.sub(r"^```(json)?|```$", "", texto.strip(), flags=re.MULTILINE).strip()
+
+        preguntas = json.loads(texto)
+        preguntas_validas = []
+        for p in preguntas:
+            if (
+                isinstance(p, dict)
+                and "pregunta" in p and "opciones" in p and "respuesta_correcta" in p
+                and len(p["opciones"]) >= 2
+                and 0 <= p["respuesta_correcta"] < len(p["opciones"])
+            ):
+                preguntas_validas.append(p)
+
+        return preguntas_validas if preguntas_validas else None
+    except Exception as e:
+        st.error(f"No se pudo generar el quiz. Detalle técnico: {e}")
+        return None
+
+
+def boton_generar_quiz(texto_contexto: str, key_sufijo: str):
+    """Botón reutilizable que aparece después de una respuesta o en la
+    barra lateral, para pedirle a Contín un quiz sobre ese tema."""
+    if st.button("🎯 Hazme un quiz de esto", key=f"quiz_btn_{key_sufijo}"):
+        with st.spinner("Contín está armando tu quiz..."):
+            preguntas = generar_quiz(texto_contexto)
+        if preguntas:
+            st.session_state.quiz_id = st.session_state.get("quiz_id", 0) + 1
+            st.session_state.quiz_actual = {"preguntas": preguntas, "tema": texto_contexto[:80]}
+            st.rerun()
+
+
+def mostrar_quiz():
+    """Dibuja el quiz activo (si hay uno) como un formulario interactivo."""
+    quiz = st.session_state.get("quiz_actual")
+    if not quiz:
+        return
+
+    preguntas = quiz["preguntas"]
+    qid = st.session_state.get("quiz_id", 0)
+
+    st.markdown("### 🎯 Quiz rápido")
+    with st.form(key=f"form_quiz_{qid}"):
+        seleccionadas = []
+        for i, p in enumerate(preguntas):
+            opciones_texto = [f"{chr(65 + j)}. {op}" for j, op in enumerate(p["opciones"])]
+            seleccion = st.radio(
+                f"**{i + 1}. {p['pregunta']}**",
+                opciones_texto,
+                key=f"quiz_{qid}_p{i}",
+                index=None,
+            )
+            seleccionadas.append(seleccion)
+        enviado = st.form_submit_button("✅ Revisar respuestas")
+
+    if enviado:
+        correctas = 0
+        for i, p in enumerate(preguntas):
+            seleccion = seleccionadas[i]
+            idx_elegido = (ord(seleccion[0]) - 65) if seleccion else -1
+            es_correcta = idx_elegido == p["respuesta_correcta"]
+            if es_correcta:
+                correctas += 1
+            texto_correcta = p["opciones"][p["respuesta_correcta"]]
+            if es_correcta:
+                st.success(f"**{i + 1}.** ¡Correcto! {p.get('explicacion', '')}")
+            else:
+                st.error(f"**{i + 1}.** La respuesta correcta era: {texto_correcta}. {p.get('explicacion', '')}")
+
+        st.markdown(f"## Resultado: {correctas}/{len(preguntas)}")
+        if correctas == len(preguntas):
+            st.session_state.mascota_estado = "feliz"
+            lanzar_confeti()
+
+    if st.button("✖️ Cerrar quiz"):
+        st.session_state.quiz_actual = None
+        st.rerun()
+
+
 if "mascota_estado" not in st.session_state:
     st.session_state.mascota_estado = "normal"
 
@@ -580,7 +696,23 @@ with st.sidebar:
         st.session_state.historial_ia = []
         st.session_state.ultimo_audio_id = None
         st.session_state.audio_widget_key = st.session_state.get("audio_widget_key", 0) + 1
+        st.session_state.quiz_actual = None
         st.rerun()
+
+    st.markdown("---")
+    st.caption("🎯 Ponte a prueba")
+    if st.button("🎯 Generar quiz del último tema"):
+        if st.session_state.get("messages"):
+            ultimos = st.session_state.messages[-4:]  # últimas 1-2 preguntas y respuestas
+            contexto_quiz = "\n".join(f"{m['role']}: {m['content']}" for m in ultimos)
+        else:
+            contexto_quiz = f"Conceptos generales de contabilidad de {nivel}."
+        with st.spinner("Contín está armando tu quiz..."):
+            preguntas = generar_quiz(contexto_quiz)
+        if preguntas:
+            st.session_state.quiz_id = st.session_state.get("quiz_id", 0) + 1
+            st.session_state.quiz_actual = {"preguntas": preguntas, "tema": contexto_quiz[:80]}
+            st.rerun()
 
     st.markdown("---")
     st.caption("🐙 Contín")
@@ -1112,6 +1244,8 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                         key=f"descarga_{len(st.session_state.messages)}",
                     )
 
+                boton_generar_quiz(texto_respuesta, key_sufijo=f"vivo_{len(st.session_state.messages)}")
+
             except Exception as e:
                 st.session_state.mascota_estado = "normal"
                 with mascota_placeholder.container():
@@ -1227,6 +1361,9 @@ for idx, message in enumerate(st.session_state.messages):
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"descarga_historial_{idx}",
                 )
+            boton_generar_quiz(message["content"], key_sufijo=f"historial_{idx}")
+
+mostrar_quiz()
 
 
 # =========================================================
