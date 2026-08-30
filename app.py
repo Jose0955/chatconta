@@ -528,7 +528,7 @@ if not api_key:
 client = Groq(api_key=api_key)
 
 # Nombre del modelo (capa gratuita de Groq, sin tarjeta de crédito)
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = "openai/gpt-oss-120b"
 MODEL_TRANSCRIPCION = "whisper-large-v3-turbo"
 
 # =========================================================
@@ -1012,6 +1012,7 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                     st.session_state.historial_ia.pop()
 
                 error_msg = str(e)
+                st.error(f"DEBUG - Error completo: {error_msg}")
 
                 if "401" in error_msg or "invalid_api_key" in error_msg.lower():
                     st.error(
