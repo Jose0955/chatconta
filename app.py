@@ -271,10 +271,10 @@ def mascota_svg(estado: str = "normal") -> str:
 
 
 def lanzar_confeti():
-    """Dispara una animación de confeti que cubre toda la pantalla por un
-    par de segundos, usando la librería canvas-confetti dentro de un
-    componente HTML (necesario porque Streamlit no ejecuta <script> sueltos
-    en st.markdown)."""
+    """Dispara una animación de confeti de colores. Usa canvas-confetti dentro
+    de un componente HTML (necesario porque Streamlit no ejecuta <script>
+    sueltos en st.markdown), con un tamaño real y visible de entrada, e
+    intenta además expandirse a toda la pantalla."""
     components.html(
         """
         <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
@@ -296,12 +296,12 @@ def lanzar_confeti():
 
             function empezar() {
                 if (typeof confetti !== 'function') { setTimeout(empezar, 100); return; }
-                var colores = ['#8AB4F8', '#5B9BF0', '#FFFFFF', '#EAF3FF'];
-                confetti({ particleCount: 160, spread: 110, origin: { y: 0.4 }, colors: colores });
-                var fin = Date.now() + 2200;
+                var colores = ['#8AB4F8', '#5B9BF0', '#FFFFFF', '#EAF3FF', '#FFD166', '#FF6B6B'];
+                confetti({ particleCount: 200, spread: 120, origin: { y: 0.3 }, colors: colores });
+                var fin = Date.now() + 2800;
                 (function ciclo() {
-                    confetti({ particleCount: 6, angle: 60, spread: 70, origin: { x: 0 }, colors: colores });
-                    confetti({ particleCount: 6, angle: 120, spread: 70, origin: { x: 1 }, colors: colores });
+                    confetti({ particleCount: 8, angle: 60, spread: 80, origin: { x: 0, y: 0.6 }, colors: colores });
+                    confetti({ particleCount: 8, angle: 120, spread: 80, origin: { x: 1, y: 0.6 }, colors: colores });
                     if (Date.now() < fin) { requestAnimationFrame(ciclo); }
                 })();
             }
@@ -309,8 +309,11 @@ def lanzar_confeti():
         })();
         </script>
         """,
-        height=1,
+        height=500,
     )
+    # Respaldo garantizado: el efecto nativo de celebración de Streamlit,
+    # que SIEMPRE funciona (no depende de scripts externos ni de CDNs).
+    st.balloons()
 
 
 if "mascota_estado" not in st.session_state:
