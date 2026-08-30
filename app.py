@@ -4,6 +4,8 @@ from google.genai import types
 from datetime import datetime
 import pandas as pd
 import io
+import re
+import json
 import random
 import streamlit.components.v1 as components
 from openpyxl.styles import Font
@@ -229,6 +231,18 @@ def mascota_svg(estado: str = "normal") -> str:
                 <text x="150" y="90" font-size="16">💙</text>
             </g>
         """
+    elif estado == "bailando":
+        ojos = """
+            <path d="M68 95 Q78 82 88 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <path d="M112 95 Q122 82 132 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+        """
+        boca = '<path d="M78 122 Q100 148 122 122" stroke="#0B3D91" stroke-width="7" fill="none" stroke-linecap="round"/>'
+        extra = """
+            <g class="notas-musicales">
+                <text x="30" y="50" font-size="22">🎵</text>
+                <text x="158" y="40" font-size="20">🎶</text>
+            </g>
+        """
     else:  # normal / idle
         ojos = """
             <circle cx="78" cy="95" r="13" fill="white" class="parpadeo"/>
@@ -239,8 +253,10 @@ def mascota_svg(estado: str = "normal") -> str:
         boca = '<path d="M85 125 Q100 135 115 125" stroke="#0B3D91" stroke-width="5" fill="none" stroke-linecap="round"/>'
         extra = ""
 
+    clase_extra = " mascota-bailando" if estado == "bailando" else ""
+
     svg_html = f"""
-    <div class="mascota-flotante">
+    <div class="mascota-flotante{clase_extra}">
     <svg viewBox="0 0 200 220" width="150" height="165" xmlns="http://www.w3.org/2000/svg">
         <defs>
             <radialGradient id="cuerpoGrad" cx="40%" cy="35%" r="75%">
@@ -316,12 +332,60 @@ def lanzar_confeti():
     st.balloons()
 
 
+def limpiar_para_voz(texto: str) -> str:
+    """Prepara el texto de Contín para leerlo en voz alta: quita símbolos de
+    Markdown (asteriscos, gatos, barras, etc.) y reemplaza las tablas por una
+    frase corta, para que no suene raro al escucharlo."""
+    lineas = texto.split("\n")
+    resultado = []
+    dentro_tabla = False
+    for linea in lineas:
+        if linea.strip().startswith("|"):
+            if not dentro_tabla:
+                resultado.append("Te dejé una tabla en pantalla con el detalle completo.")
+                dentro_tabla = True
+            continue
+        dentro_tabla = False
+        resultado.append(linea)
+
+    texto_limpio = "\n".join(resultado)
+    texto_limpio = re.sub(r'[*_#`>]', '', texto_limpio)
+    texto_limpio = re.sub(r'\n{2,}', '. ', texto_limpio)
+    texto_limpio = re.sub(r'\s+', ' ', texto_limpio).strip()
+    return texto_limpio
+
+
+def hablar_texto(texto: str):
+    """Hace que el navegador lea el texto en voz alta (texto-a-voz nativo,
+    no necesita ningún servicio externo, funciona sin internet)."""
+    texto_para_hablar = limpiar_para_voz(texto)
+    if not texto_para_hablar:
+        return
+    texto_js = json.dumps(texto_para_hablar)
+    components.html(
+        f"""
+        <script>
+        try {{
+            window.speechSynthesis.cancel();
+            var utterance = new SpeechSynthesisUtterance({texto_js});
+            utterance.lang = 'es-ES';
+            utterance.rate = 1.02;
+            utterance.pitch = 1.05;
+            window.speechSynthesis.speak(utterance);
+        }} catch (e) {{}}
+        </script>
+        """,
+        height=0,
+    )
+
+
 if "mascota_estado" not in st.session_state:
     st.session_state.mascota_estado = "normal"
 
 mascota_placeholder = st.empty()
+_estado_inicial = "bailando" if st.session_state.get("bailando", False) else st.session_state.mascota_estado
 with mascota_placeholder.container():
-    st.markdown(mascota_svg(st.session_state.mascota_estado), unsafe_allow_html=True)
+    st.markdown(mascota_svg(_estado_inicial), unsafe_allow_html=True)
 
 st.markdown(
     f"""
@@ -346,6 +410,18 @@ st.markdown(
     @keyframes parpadear {{
         0%, 92%, 100% {{ transform: scaleY(1); }}
         95%           {{ transform: scaleY(0.1); }}
+    }}
+
+    /* ---------- Contín bailando 🕺 ---------- */
+    .mascota-bailando {{
+        animation: bailar 0.8s ease-in-out infinite !important;
+    }}
+    @keyframes bailar {{
+        0%   {{ transform: translateX(0) rotate(-6deg); }}
+        25%  {{ transform: translateX(-10px) rotate(6deg) translateY(-6px); }}
+        50%  {{ transform: translateX(0) rotate(-6deg); }}
+        75%  {{ transform: translateX(10px) rotate(6deg) translateY(-6px); }}
+        100% {{ transform: translateX(0) rotate(-6deg); }}
     }}
 
     /* ---------- Contín flotante: siempre visible, sin importar el scroll ---------- */
@@ -431,6 +507,33 @@ with st.sidebar:
         st.session_state.ultimo_audio_id = None
         st.session_state.audio_widget_key = st.session_state.get("audio_widget_key", 0) + 1
         st.rerun()
+
+    st.markdown("---")
+    st.caption("🐙 Contín")
+    if "bailando" not in st.session_state:
+        st.session_state.bailando = False
+    if "modo_voz" not in st.session_state:
+        st.session_state.modo_voz = False
+
+    if st.button("🕺 ¡Que baile Contín!" if not st.session_state.bailando else "⏹️ Parar de bailar"):
+        st.session_state.bailando = not st.session_state.bailando
+        st.rerun()
+
+    if st.button(
+        "🎤 Activar modo conversación por voz" if not st.session_state.modo_voz
+        else "🔇 Salir del modo conversación por voz"
+    ):
+        st.session_state.modo_voz = not st.session_state.modo_voz
+        st.rerun()
+
+    if st.session_state.modo_voz:
+        st.caption("🔊 Contín te va a responder también en audio. Usa el panel '🎤 Preguntar por voz' de arriba para hablarle.")
+        if st.button("❌ Cancelar audio"):
+            components.html(
+                "<script>try{window.speechSynthesis.cancel();}catch(e){}</script>",
+                height=0,
+            )
+            st.rerun()
 
 # =========================================================
 # 3. PROMPT DEL SISTEMA (se adapta según el nivel elegido)
@@ -759,6 +862,9 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
     ]
     es_agradecimiento = any(p in texto_mostrado.lower() for p in PALABRAS_AGRADECIMIENTO)
 
+    # Si estaba bailando, al hacer una pregunta se pone serio a pensar 🙂
+    st.session_state.bailando = False
+
     # 1) Cara de "pensando" mientras se prepara/envía la pregunta
     st.session_state.mascota_estado = "pensando"
     with mascota_placeholder.container():
@@ -796,6 +902,10 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
 
                 if es_agradecimiento:
                     lanzar_confeti()
+
+                # Si el modo conversación por voz está activo, Contín lee su respuesta en voz alta
+                if st.session_state.get("modo_voz"):
+                    hablar_texto(response.text)
 
                 # Si la respuesta trae tablas, ofrecemos descargarlas en Excel
                 tablas = extraer_tablas_markdown(response.text)
@@ -936,7 +1046,7 @@ pregunta_por_voz = None
 if "audio_widget_key" not in st.session_state:
     st.session_state.audio_widget_key = 0
 
-with st.expander("🎤 Preguntar por voz"):
+with st.expander("🎤 Preguntar por voz", expanded=st.session_state.get("modo_voz", False)):
     audio_grabado = st.audio_input(
         "Graba tu pregunta y suéltala, Contín la transcribe sola",
         key=f"audio_{st.session_state.audio_widget_key}",
