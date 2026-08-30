@@ -5,6 +5,7 @@ from datetime import datetime
 import pandas as pd
 import io
 import random
+import streamlit.components.v1 as components
 from openpyxl.styles import Font
 
 # =========================================================
@@ -24,11 +25,11 @@ st.set_page_config(
 # ---------------------------------------------------------
 AZUL_ACENTO = "#8AB4F8"     # azul estilo Google/Gmail modo oscuro
 AZUL_SUAVE = "#5B9BF0"
-FONDO_APP = "#0B0E14"
-FONDO_TARJETA = "#161B22"
-FONDO_BURBUJA_USUARIO = "#20262E"
-FONDO_BURBUJA_ASISTENTE = "#152232"
-TEXTO_CLARO = "#E8EAED"
+FONDO_APP = "#050709"        # negro más duro y sólido
+FONDO_TARJETA = "#12161C"
+FONDO_BURBUJA_USUARIO = "#1B2026"
+FONDO_BURBUJA_ASISTENTE = "#0F1B2A"
+TEXTO_CLARO = "#FFFFFF"
 
 # Generamos posiciones aleatorias (pero fijas por sesión) para las estrellitas
 random.seed(7)
@@ -50,7 +51,22 @@ st.markdown(
     <style>
     /* ---------- Fondo general y estrellitas animadas ---------- */
     .stApp {{
-        background: radial-gradient(ellipse at top, #10141f 0%, {FONDO_APP} 60%) !important;
+        background: {FONDO_APP} !important;
+    }}
+    html, body {{
+        background-color: {FONDO_APP} !important;
+    }}
+    /* La zona de abajo donde vive la caja de texto (queda fuera de .stApp
+       en algunas versiones de Streamlit y se veía blanca) */
+    [data-testid="stBottom"],
+    [data-testid="stBottomBlockContainer"],
+    .stChatFloatingInputContainer,
+    [data-testid="stAppViewContainer"] {{
+        background-color: {FONDO_APP} !important;
+    }}
+    /* Barra decorativa roja de arriba -> la pasamos a azul para que combine */
+    [data-testid="stDecoration"] {{
+        background-image: linear-gradient(90deg, {AZUL_SUAVE}, {AZUL_ACENTO}) !important;
     }}
 
     .campo-estrellas {{
@@ -164,6 +180,175 @@ st.markdown(
 )
 
 st.title("🤝 Contín, tu asistente de confianza")
+
+# ---------------------------------------------------------
+# MASCOTA: Contín, el alien-pulpo contable 🐙
+# Cambia de cara según el momento: pensando, hablando o feliz.
+# ---------------------------------------------------------
+def mascota_svg(estado: str = "normal") -> str:
+    if estado == "pensando":
+        ojos = """
+            <circle cx="78" cy="95" r="13" fill="white"/>
+            <circle cx="122" cy="95" r="13" fill="white"/>
+            <circle cx="83" cy="90" r="6" fill="#0B3D91"/>
+            <circle cx="127" cy="90" r="6" fill="#0B3D91"/>
+        """
+        boca = '<ellipse cx="100" cy="128" rx="7" ry="6" fill="#0B3D91"/>'
+        extra = """
+            <g class="burbuja-pensar">
+                <circle cx="150" cy="55" r="5" fill="white" opacity="0.85"/>
+                <circle cx="163" cy="42" r="7" fill="white" opacity="0.85"/>
+                <ellipse cx="182" cy="24" rx="16" ry="12" fill="white" opacity="0.9"/>
+                <text x="182" y="29" font-size="14" text-anchor="middle" fill="#5B9BF0">?</text>
+            </g>
+        """
+    elif estado == "hablando":
+        ojos = """
+            <circle cx="78" cy="95" r="14" fill="white"/>
+            <circle cx="122" cy="95" r="14" fill="white"/>
+            <circle cx="80" cy="95" r="7" fill="#0B3D91"/>
+            <circle cx="124" cy="95" r="7" fill="#0B3D91"/>
+        """
+        boca = '<ellipse cx="100" cy="130" rx="14" ry="11" fill="#0B3D91"/>'
+        extra = """
+            <g class="chispas">
+                <path d="M158 60 L162 70 L172 72 L162 76 L158 86 L154 76 L144 72 L154 70 Z" fill="white" opacity="0.9"/>
+                <circle cx="35" cy="65" r="4" fill="white" opacity="0.7"/>
+            </g>
+        """
+    elif estado == "feliz":
+        ojos = """
+            <path d="M68 95 Q78 82 88 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <path d="M112 95 Q122 82 132 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+        """
+        boca = '<path d="M78 122 Q100 148 122 122" stroke="#0B3D91" stroke-width="7" fill="none" stroke-linecap="round"/>'
+        extra = """
+            <g class="corazones">
+                <text x="35" y="55" font-size="22">💙</text>
+                <text x="160" y="45" font-size="18">✨</text>
+                <text x="150" y="90" font-size="16">💙</text>
+            </g>
+        """
+    else:  # normal / idle
+        ojos = """
+            <circle cx="78" cy="95" r="13" fill="white" class="parpadeo"/>
+            <circle cx="122" cy="95" r="13" fill="white" class="parpadeo"/>
+            <circle cx="78" cy="95" r="6" fill="#0B3D91"/>
+            <circle cx="122" cy="95" r="6" fill="#0B3D91"/>
+        """
+        boca = '<path d="M85 125 Q100 135 115 125" stroke="#0B3D91" stroke-width="5" fill="none" stroke-linecap="round"/>'
+        extra = ""
+
+    return f"""
+    <div style="display:flex; justify-content:center; margin: -10px 0 10px 0;">
+    <svg viewBox="0 0 200 220" width="150" height="165" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <radialGradient id="cuerpoGrad" cx="40%" cy="35%" r="75%">
+                <stop offset="0%" stop-color="#EAF3FF"/>
+                <stop offset="45%" stop-color="#8AB4F8"/>
+                <stop offset="100%" stop-color="#3E7BD9"/>
+            </radialGradient>
+        </defs>
+
+        <g class="tentaculo t1"><path d="M55 165 Q40 190 50 215" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
+        <g class="tentaculo t2"><path d="M80 175 Q75 200 82 218" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
+        <g class="tentaculo t3"><path d="M120 175 Q125 200 118 218" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
+        <g class="tentaculo t4"><path d="M145 165 Q160 190 150 215" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
+
+        <line x1="70" y1="45" x2="55" y2="15" stroke="#5B9BF0" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="55" cy="12" r="7" fill="#EAF3FF" class="antena"/>
+        <line x1="130" y1="45" x2="145" y2="15" stroke="#5B9BF0" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="145" cy="12" r="7" fill="#EAF3FF" class="antena"/>
+
+        <ellipse cx="100" cy="110" rx="80" ry="75" fill="url(#cuerpoGrad)"/>
+
+        {ojos}
+        {boca}
+        {extra}
+    </svg>
+    </div>
+    """
+
+
+def lanzar_confeti():
+    """Dispara una animación de confeti que cubre toda la pantalla por un
+    par de segundos, usando la librería canvas-confetti dentro de un
+    componente HTML (necesario porque Streamlit no ejecuta <script> sueltos
+    en st.markdown)."""
+    components.html(
+        """
+        <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+        <script>
+        (function () {
+            try {
+                var marco = window.frameElement;
+                if (marco) {
+                    marco.style.position = 'fixed';
+                    marco.style.top = '0';
+                    marco.style.left = '0';
+                    marco.style.width = '100vw';
+                    marco.style.height = '100vh';
+                    marco.style.zIndex = '999999';
+                    marco.style.pointerEvents = 'none';
+                    marco.style.border = 'none';
+                }
+            } catch (e) {}
+
+            function empezar() {
+                if (typeof confetti !== 'function') { setTimeout(empezar, 100); return; }
+                var colores = ['#8AB4F8', '#5B9BF0', '#FFFFFF', '#EAF3FF'];
+                confetti({ particleCount: 160, spread: 110, origin: { y: 0.4 }, colors: colores });
+                var fin = Date.now() + 2200;
+                (function ciclo() {
+                    confetti({ particleCount: 6, angle: 60, spread: 70, origin: { x: 0 }, colors: colores });
+                    confetti({ particleCount: 6, angle: 120, spread: 70, origin: { x: 1 }, colors: colores });
+                    if (Date.now() < fin) { requestAnimationFrame(ciclo); }
+                })();
+            }
+            empezar();
+        })();
+        </script>
+        """,
+        height=1,
+    )
+
+
+if "mascota_estado" not in st.session_state:
+    st.session_state.mascota_estado = "normal"
+
+mascota_placeholder = st.empty()
+with mascota_placeholder.container():
+    st.markdown(mascota_svg(st.session_state.mascota_estado), unsafe_allow_html=True)
+
+st.markdown(
+    f"""
+    <style>
+    .tentaculo {{ transform-origin: top center; animation: ondear 3s ease-in-out infinite; }}
+    .t1 {{ animation-delay: 0s; }} .t2 {{ animation-delay: 0.4s; }}
+    .t3 {{ animation-delay: 0.2s; }} .t4 {{ animation-delay: 0.6s; }}
+    @keyframes ondear {{
+        0%, 100% {{ transform: rotate(0deg); }}
+        50% {{ transform: rotate(6deg); }}
+    }}
+    .antena {{ animation: brillo 2s ease-in-out infinite; }}
+    @keyframes brillo {{
+        0%, 100% {{ opacity: 0.6; filter: drop-shadow(0 0 2px {AZUL_ACENTO}); }}
+        50% {{ opacity: 1; filter: drop-shadow(0 0 8px {AZUL_ACENTO}); }}
+    }}
+    .parpadeo {{
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: parpadear 4.5s ease-in-out infinite;
+    }}
+    @keyframes parpadear {{
+        0%, 92%, 100% {{ transform: scaleY(1); }}
+        95%           {{ transform: scaleY(0.1); }}
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.write(
     "¡Hola! Qué gusto tenerte por aquí 😊 Soy **Contín**, y estoy para ayudarte a "
     "entender contabilidad sin agobios ni tecnicismos raros. Aquí puedes preguntar "
@@ -520,6 +705,20 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
     contexto_extra: información adicional (p.ej. datos de un Excel) que se le manda a la IA
                      PERO no se muestra en el chat, para no llenar la pantalla de datos crudos.
     """
+    # Detecta si el estudiante se está despidiendo agradecido, para que
+    # Contín se ponga feliz y celebre con confeti 🎉
+    PALABRAS_AGRADECIMIENTO = [
+        "gracias", "graci", "muchas gracias", "excelente gracias",
+        "ya entendí", "ya entendi", "perfecto, gracias", "genial gracias",
+        "me quedó claro", "me quedo claro", "quedó clarísimo",
+    ]
+    es_agradecimiento = any(p in texto_mostrado.lower() for p in PALABRAS_AGRADECIMIENTO)
+
+    # 1) Cara de "pensando" mientras se prepara/envía la pregunta
+    st.session_state.mascota_estado = "pensando"
+    with mascota_placeholder.container():
+        st.markdown(mascota_svg("pensando"), unsafe_allow_html=True)
+
     st.session_state.messages.append({"role": "user", "content": texto_mostrado})
     with st.chat_message("user", avatar="🙂"):
         st.markdown(texto_mostrado)
@@ -544,6 +743,15 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                     {"role": "assistant", "content": response.text}
                 )
 
+                # 2) Cara según cómo terminó: feliz (si agradeciste) o hablando/explicando
+                nuevo_estado = "feliz" if es_agradecimiento else "hablando"
+                st.session_state.mascota_estado = nuevo_estado
+                with mascota_placeholder.container():
+                    st.markdown(mascota_svg(nuevo_estado), unsafe_allow_html=True)
+
+                if es_agradecimiento:
+                    lanzar_confeti()
+
                 # Si la respuesta trae tablas, ofrecemos descargarlas en Excel
                 tablas = extraer_tablas_markdown(response.text)
                 if tablas:
@@ -557,6 +765,10 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                     )
 
             except Exception as e:
+                st.session_state.mascota_estado = "normal"
+                with mascota_placeholder.container():
+                    st.markdown(mascota_svg("normal"), unsafe_allow_html=True)
+
                 error_msg = str(e)
 
                 if "404" in error_msg:
