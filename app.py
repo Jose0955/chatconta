@@ -240,7 +240,7 @@ def mascota_svg(estado: str = "normal") -> str:
         extra = ""
 
     svg_html = f"""
-    <div style="display:flex; justify-content:center; margin: -10px 0 10px 0;">
+    <div class="mascota-flotante">
     <svg viewBox="0 0 200 220" width="150" height="165" xmlns="http://www.w3.org/2000/svg">
         <defs>
             <radialGradient id="cuerpoGrad" cx="40%" cy="35%" r="75%">
@@ -343,6 +343,31 @@ st.markdown(
     @keyframes parpadear {{
         0%, 92%, 100% {{ transform: scaleY(1); }}
         95%           {{ transform: scaleY(0.1); }}
+    }}
+
+    /* ---------- Contín flotante: siempre visible, sin importar el scroll ---------- */
+    .mascota-flotante {{
+        position: fixed;
+        top: 78px;
+        right: 18px;
+        z-index: 999998;
+        pointer-events: none;
+        filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
+    }}
+    .mascota-flotante svg {{
+        width: 120px;
+        height: 130px;
+    }}
+    @media (max-width: 640px) {{
+        .mascota-flotante {{
+            top: auto;
+            bottom: 92px;
+            right: 8px;
+        }}
+        .mascota-flotante svg {{
+            width: 78px;
+            height: 86px;
+        }}
     }}
     </style>
     """,
