@@ -3,11 +3,24 @@ from groq import Groq
 from datetime import datetime
 import pandas as pd
 import io
+import os
 import re
 import json
 import random
 import streamlit.components.v1 as components
 from openpyxl.styles import Font
+
+
+def hojas_excel_a_markdown(hojas: dict) -> str:
+    """Convierte un diccionario de hojas (nombre -> DataFrame) de un Excel
+    en texto con tablas Markdown. Función compartida: la usan tanto el
+    material que suben los docentes como los ejercicios que suben los
+    estudiantes."""
+    partes = []
+    for nombre_hoja, df in hojas.items():
+        partes.append(f"--- Hoja: {nombre_hoja} ---")
+        partes.append(df.to_markdown(index=False))
+    return "\n".join(partes)
 
 # =========================================================
 # CONFIGURACIÓN GENERAL DE LA PÁGINA
@@ -554,6 +567,13 @@ with st.sidebar:
         "**3.º:** Costos, Kardex (PEPS/Promedio), rol de pagos."
     )
 
+    if MATERIAL_DOCENTES_ARCHIVOS:
+        with st.expander(f"📚 Material de docentes ({len(MATERIAL_DOCENTES_ARCHIVOS)} archivo(s))"):
+            for nombre in MATERIAL_DOCENTES_ARCHIVOS:
+                st.caption(f"• {nombre}")
+    else:
+        st.caption("📚 Sin material de docentes cargado todavía.")
+
     st.markdown("---")
     if st.button("🗑️ Empezar de nuevo"):
         st.session_state.messages = []
@@ -725,6 +745,83 @@ FECHA_ACTUAL_TEXTO = (
     f"aproximadamente las {AHORA.strftime('%H:%M')}"
 )
 
+# ---------------------------------------------------------
+# MATERIAL DE CLASE SUBIDO POR LOS DOCENTES
+# Los docentes NO suben archivos desde la app (eso requeriría una base de
+# datos); en vez de eso, suben sus archivos directamente a la carpeta
+# "material_docentes/" del repositorio de GitHub, y Contín los lee solo
+# al arrancar. Soporta: .txt, .md, .xlsx/.xls, .pdf, .pptx
+# ---------------------------------------------------------
+CARPETA_MATERIAL_DOCENTES = "material_docentes"
+LARGO_MAXIMO_MATERIAL = 6000  # límite de caracteres para no disparar el consumo de tokens
+
+
+@st.cache_data(show_spinner=False)
+def cargar_material_docentes():
+    """Lee todos los archivos de la carpeta material_docentes/ y arma un
+    texto resumido para dárselo a Contín como referencia extra. Si un
+    archivo falla al leerse, simplemente se lo salta (no rompe la app)."""
+    if not os.path.isdir(CARPETA_MATERIAL_DOCENTES):
+        return "", []
+
+    partes = []
+    archivos_cargados = []
+
+    for nombre_archivo in sorted(os.listdir(CARPETA_MATERIAL_DOCENTES)):
+        if nombre_archivo.startswith(".") or nombre_archivo.upper().startswith("README"):
+            continue
+        ruta = os.path.join(CARPETA_MATERIAL_DOCENTES, nombre_archivo)
+        if not os.path.isfile(ruta):
+            continue
+        extension = nombre_archivo.lower().rsplit(".", 1)[-1] if "." in nombre_archivo else ""
+
+        try:
+            texto_archivo = None
+
+            if extension in ("txt", "md"):
+                with open(ruta, "r", encoding="utf-8", errors="ignore") as f:
+                    texto_archivo = f.read()
+
+            elif extension in ("xlsx", "xls"):
+                hojas = pd.read_excel(ruta, sheet_name=None)
+                texto_archivo = hojas_excel_a_markdown(hojas)
+
+            elif extension == "pdf":
+                from pypdf import PdfReader
+                lector = PdfReader(ruta)
+                paginas_texto = [(p.extract_text() or "") for p in lector.pages[:20]]
+                texto_archivo = "\n".join(paginas_texto)
+
+            elif extension == "pptx":
+                from pptx import Presentation
+                presentacion = Presentation(ruta)
+                lineas = []
+                for diapositiva in presentacion.slides:
+                    for forma in diapositiva.shapes:
+                        if forma.has_text_frame:
+                            texto_forma = forma.text_frame.text.strip()
+                            if texto_forma:
+                                lineas.append(texto_forma)
+                texto_archivo = "\n".join(lineas)
+
+            if texto_archivo and texto_archivo.strip():
+                partes.append(f"--- Material del docente: {nombre_archivo} ---\n{texto_archivo.strip()}")
+                archivos_cargados.append(nombre_archivo)
+
+        except Exception:
+            # Si un archivo específico falla (formato raro, corrupto, etc.),
+            # lo saltamos sin tumbar el resto de la app.
+            continue
+
+    texto_completo = "\n\n".join(partes)
+    if len(texto_completo) > LARGO_MAXIMO_MATERIAL:
+        texto_completo = texto_completo[:LARGO_MAXIMO_MATERIAL] + "\n[...material recortado por espacio...]"
+
+    return texto_completo, archivos_cargados
+
+
+MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
+
 SYSTEM_PROMPT = f"""
 Eres "Contín", un tutor virtual de Contabilidad para estudiantes de Bachillerato
 Técnico en Ecuador. Tu personalidad es cercana, cálida y de mucha confianza:
@@ -835,6 +932,19 @@ del estudiante). Trátalo igual que cualquier ejercicio contable:
 4. Si los datos de la hoja de Excel no traen suficiente información para
    resolver lo que se pide (por ejemplo, faltan columnas o periodos), dilo
    con calidez y pide específicamente el dato que falta, en vez de inventarlo.
+
+MATERIAL DE CLASE SUBIDO POR LOS DOCENTES:
+Además de todo lo anterior, tienes acceso a material que los docentes del
+colegio subieron (apuntes, diapositivas, ejemplos, hojas de cálculo). Úsalo
+como referencia EXTRA para que tus respuestas sean más precisas y estén
+alineadas con lo que se enseña en el colegio — pero NO es tu única fuente:
+sigue respondiendo con tu conocimiento general de contabilidad igual que
+siempre cuando el material no cubra lo que te preguntan. Si notas que el
+material del docente dice algo distinto a lo que tú sabes, prioriza el
+material del docente (es lo que se está enseñando en esa clase específica),
+pero puedes mencionar amablemente si ves una posible discrepancia.
+
+{MATERIAL_DOCENTES_TEXTO if MATERIAL_DOCENTES_TEXTO else "(Por ahora no hay material de docentes cargado; usa tu conocimiento general.)"}
 
 {TABLA_RETENCIONES}
 """
@@ -1012,7 +1122,6 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                     st.session_state.historial_ia.pop()
 
                 error_msg = str(e)
-                st.error(f"DEBUG - Error completo: {error_msg}")
 
                 if "401" in error_msg or "invalid_api_key" in error_msg.lower():
                     st.error(
@@ -1054,11 +1163,7 @@ def transcribir_audio(audio_bytes: bytes):
 def convertir_excel_a_texto(hojas: dict) -> str:
     """Convierte todas las hojas de un Excel subido en texto (tablas Markdown)
     para poder incluirlas como contexto en el mensaje a la IA."""
-    partes = ["ARCHIVO EXCEL SUBIDO POR EL ESTUDIANTE:"]
-    for nombre_hoja, df in hojas.items():
-        partes.append(f"\n--- Hoja: {nombre_hoja} ---")
-        partes.append(df.to_markdown(index=False))
-    return "\n".join(partes)
+    return "ARCHIVO EXCEL SUBIDO POR EL ESTUDIANTE:\n" + hojas_excel_a_markdown(hojas)
 
 
 # =========================================================
