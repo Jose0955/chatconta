@@ -239,7 +239,7 @@ def mascota_svg(estado: str = "normal") -> str:
         boca = '<path d="M85 125 Q100 135 115 125" stroke="#0B3D91" stroke-width="5" fill="none" stroke-linecap="round"/>'
         extra = ""
 
-    return f"""
+    svg_html = f"""
     <div style="display:flex; justify-content:center; margin: -10px 0 10px 0;">
     <svg viewBox="0 0 200 220" width="150" height="165" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -249,25 +249,25 @@ def mascota_svg(estado: str = "normal") -> str:
                 <stop offset="100%" stop-color="#3E7BD9"/>
             </radialGradient>
         </defs>
-
         <g class="tentaculo t1"><path d="M55 165 Q40 190 50 215" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
         <g class="tentaculo t2"><path d="M80 175 Q75 200 82 218" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
         <g class="tentaculo t3"><path d="M120 175 Q125 200 118 218" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
         <g class="tentaculo t4"><path d="M145 165 Q160 190 150 215" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
-
         <line x1="70" y1="45" x2="55" y2="15" stroke="#5B9BF0" stroke-width="5" stroke-linecap="round"/>
         <circle cx="55" cy="12" r="7" fill="#EAF3FF" class="antena"/>
         <line x1="130" y1="45" x2="145" y2="15" stroke="#5B9BF0" stroke-width="5" stroke-linecap="round"/>
         <circle cx="145" cy="12" r="7" fill="#EAF3FF" class="antena"/>
-
         <ellipse cx="100" cy="110" rx="80" ry="75" fill="url(#cuerpoGrad)"/>
-
         {ojos}
         {boca}
         {extra}
     </svg>
     </div>
     """
+    # Importante: quitamos cualquier línea en blanco, porque Streamlit
+    # (al interpretar esto como Markdown) corta el bloque de HTML apenas
+    # encuentra una línea vacía, y el resto se muestra como texto crudo.
+    return "\n".join(linea for linea in svg_html.split("\n") if linea.strip() != "")
 
 
 def lanzar_confeti():
