@@ -243,6 +243,23 @@ def mascota_svg(estado: str = "normal") -> str:
                 <text x="158" y="40" font-size="20">🎶</text>
             </g>
         """
+    elif estado == "cantando":
+        ojos = """
+            <path d="M68 92 Q78 80 88 92" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <path d="M112 92 Q122 80 132 92" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+        """
+        boca = '<ellipse cx="100" cy="132" rx="12" ry="14" fill="#0B3D91"/>'
+        extra = """
+            <g class="notas-musicales">
+                <text x="150" y="45" font-size="24">🎵</text>
+                <text x="28" y="60" font-size="18">🎶</text>
+            </g>
+            <g class="microfono">
+                <rect x="150" y="98" width="12" height="26" rx="6" fill="#EEE"/>
+                <line x1="156" y1="124" x2="156" y2="145" stroke="#5B9BF0" stroke-width="4"/>
+                <circle cx="156" cy="96" r="10" fill="#DDD"/>
+            </g>
+        """
     else:  # normal / idle
         ojos = """
             <circle cx="78" cy="95" r="13" fill="white" class="parpadeo"/>
@@ -252,6 +269,41 @@ def mascota_svg(estado: str = "normal") -> str:
         """
         boca = '<path d="M85 125 Q100 135 115 125" stroke="#0B3D91" stroke-width="5" fill="none" stroke-linecap="round"/>'
         extra = ""
+
+    # ---------------------------------------------------------
+    # Accesorios: en modo "profesional" (explicando conta) usa
+    # lentes + calculadora. En modo "amigo" (consejos, baile,
+    # canto, celebración) se los quita y quedan tirados al lado.
+    # ---------------------------------------------------------
+    ESTADOS_PROFESIONALES = ("normal", "pensando", "hablando")
+    if estado in ESTADOS_PROFESIONALES:
+        accesorios = """
+            <g class="lentes">
+                <circle cx="78" cy="95" r="18" fill="#8AB4F8" fill-opacity="0.25" stroke="#0B3D91" stroke-width="3"/>
+                <circle cx="122" cy="95" r="18" fill="#8AB4F8" fill-opacity="0.25" stroke="#0B3D91" stroke-width="3"/>
+                <line x1="96" y1="95" x2="104" y2="95" stroke="#0B3D91" stroke-width="3"/>
+            </g>
+            <g class="calculadora">
+                <rect x="150" y="118" width="26" height="34" rx="4" fill="#E8EAED" stroke="#3E7BD9" stroke-width="2"/>
+                <rect x="154" y="122" width="18" height="7" rx="1" fill="#3E7BD9"/>
+                <circle cx="157" cy="135" r="2" fill="#3E7BD9"/>
+                <circle cx="163" cy="135" r="2" fill="#3E7BD9"/>
+                <circle cx="169" cy="135" r="2" fill="#3E7BD9"/>
+                <circle cx="157" cy="143" r="2" fill="#3E7BD9"/>
+                <circle cx="163" cy="143" r="2" fill="#3E7BD9"/>
+                <circle cx="169" cy="143" r="2" fill="#3E7BD9"/>
+            </g>
+        """
+    else:
+        # Modo amigo: lentes y calculadora tirados a un lado
+        accesorios = """
+            <g class="modo-amigo-doodle" opacity="0.8">
+                <circle cx="182" cy="168" r="7" fill="none" stroke="#5B9BF0" stroke-width="2"/>
+                <circle cx="196" cy="172" r="7" fill="none" stroke="#5B9BF0" stroke-width="2"/>
+                <line x1="189" y1="169" x2="189" y2="171" stroke="#5B9BF0" stroke-width="2"/>
+                <rect x="8" y="172" width="16" height="20" rx="3" fill="#E8EAED" stroke="#3E7BD9" stroke-width="2" transform="rotate(-18 16 182)"/>
+            </g>
+        """
 
     clase_extra = " mascota-bailando" if estado == "bailando" else ""
 
@@ -277,6 +329,7 @@ def mascota_svg(estado: str = "normal") -> str:
         {ojos}
         {boca}
         {extra}
+        {accesorios}
     </svg>
     </div>
     """
@@ -726,6 +779,16 @@ preguntas sencillas de conversación cotidiana, por ejemplo:
 No fuerces el tema de contabilidad en cada respuesta si el estudiante solo quiere
 charlar un momento; simplemente sé natural y cercano.
 
+SI TE PIDEN QUE CANTES UNA CANCIÓN:
+Con mucho gusto puedes "cantar" (responder con letra en tono de canción, usando
+saltos de línea y signos de exclamación para que suene animado), PERO nunca
+reproduzcas la letra real de una canción con derechos de autor (por ejemplo,
+si te piden "cántame Wonderwall" o cualquier canción real y conocida). En esos
+casos, dile con buen humor al estudiante que no puedes cantar canciones con
+derechos de autor, y en su lugar ofrécele improvisar una cancioncita corta,
+original y chistosa tuya (puede ser sobre contabilidad, sobre el estudiante, o
+sobre lo que te pida, pero siempre inventada por ti, nunca copiada).
+
 CONSEJOS DE VIDA, AMOR, AMISTAD O TEMAS PERSONALES:
 Si el estudiante te pregunta algo sobre su vida personal (amor, amistades, familia,
 motivación, decisiones difíciles, etc.), puedes darle un consejo cálido, honesto y
@@ -862,6 +925,10 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
     ]
     es_agradecimiento = any(p in texto_mostrado.lower() for p in PALABRAS_AGRADECIMIENTO)
 
+    # Detecta si le está pidiendo que cante, para sacar el micrófono 🎤
+    PALABRAS_CANTAR = ["cántame", "cantame", "canta", "cántanos", "puedes cantar", "cantar algo"]
+    es_canto = any(p in texto_mostrado.lower() for p in PALABRAS_CANTAR)
+
     # Si estaba bailando, al hacer una pregunta se pone serio a pensar 🙂
     st.session_state.bailando = False
 
@@ -894,8 +961,13 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                     {"role": "assistant", "content": response.text}
                 )
 
-                # 2) Cara según cómo terminó: feliz (si agradeciste) o hablando/explicando
-                nuevo_estado = "feliz" if es_agradecimiento else "hablando"
+                # 2) Cara según cómo terminó: cantando > feliz (agradecimiento) > hablando
+                if es_canto:
+                    nuevo_estado = "cantando"
+                elif es_agradecimiento:
+                    nuevo_estado = "feliz"
+                else:
+                    nuevo_estado = "hablando"
                 st.session_state.mascota_estado = nuevo_estado
                 with mascota_placeholder.container():
                     st.markdown(mascota_svg(nuevo_estado), unsafe_allow_html=True)
