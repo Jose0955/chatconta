@@ -1,6 +1,5 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+from groq import Groq
 from datetime import datetime
 import pandas as pd
 import io
@@ -516,19 +515,21 @@ st.write(
 # =========================================================
 # 1. VALIDACIÓN DE API KEY
 # =========================================================
-api_key = st.secrets.get("GEMINI_API_KEY")
+api_key = st.secrets.get("GROQ_API_KEY")
 if not api_key:
     st.error(
-        "⚠️ No se encontró la API Key de Gemini.\n\n"
+        "⚠️ No se encontró la API Key de Groq.\n\n"
         "Ve a la configuración de tu app en Streamlit Cloud → **Settings → Secrets** "
-        "y agrega:\n\n`GEMINI_API_KEY = \"tu_clave_aqui\"`"
+        "y agrega:\n\n`GROQ_API_KEY = \"tu_clave_aqui\"`\n\n"
+        "Consigue tu llave gratis en https://console.groq.com/keys"
     )
     st.stop()
 
-client = genai.Client(api_key=api_key)
+client = Groq(api_key=api_key)
 
-# Nombre del modelo (capa gratuita de Google AI Studio)
-MODEL_NAME = "gemini-3.6-flash"
+# Nombre del modelo (capa gratuita de Groq, sin tarjeta de crédito)
+MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_TRANSCRIPCION = "whisper-large-v3-turbo"
 
 # =========================================================
 # 2. BARRA LATERAL: SELECCIÓN DE NIVEL Y OPCIONES
@@ -556,7 +557,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("🗑️ Empezar de nuevo"):
         st.session_state.messages = []
-        st.session_state.chat_session = None
+        st.session_state.historial_ia = []
         st.session_state.ultimo_audio_id = None
         st.session_state.audio_widget_key = st.session_state.get("audio_widget_key", 0) + 1
         st.rerun()
@@ -844,17 +845,20 @@ del estudiante). Trátalo igual que cualquier ejercicio contable:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "chat_session" not in st.session_state:
-    st.session_state.chat_session = None
+if "historial_ia" not in st.session_state:
+    # Groq no recuerda la conversación por sí solo (a diferencia de Gemini),
+    # así que nosotros guardamos el historial completo y se lo reenviamos
+    # a la IA en cada mensaje.
+    st.session_state.historial_ia = []
 
 if "nivel_actual" not in st.session_state:
     st.session_state.nivel_actual = nivel
 
-# Si el usuario cambia de nivel, reiniciamos la sesión de chat
-# para que el nuevo prompt de sistema se aplique.
+# Si el usuario cambia de nivel, reiniciamos la conversación
+# para que el nuevo enfoque (1.º/2.º/3.º) se aplique desde cero.
 if st.session_state.nivel_actual != nivel:
     st.session_state.nivel_actual = nivel
-    st.session_state.chat_session = None
+    st.session_state.historial_ia = []
 
 # =========================================================
 # (el historial se muestra más abajo, después de definir las funciones
@@ -946,19 +950,26 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
     with st.chat_message("assistant", avatar="🤝"):
         with st.spinner("Contín está pensando cómo explicarte esto..."):
             try:
-                # Creamos la sesión de chat solo una vez (o si cambió el nivel)
-                if st.session_state.chat_session is None:
-                    st.session_state.chat_session = client.chats.create(
-                        model=MODEL_NAME,
-                        config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT,
-                        ),
-                    )
+                # Agregamos el mensaje del estudiante al historial que se le
+                # manda a la IA (Groq no recuerda solo, se lo reenviamos todo)
+                st.session_state.historial_ia.append({"role": "user", "content": mensaje_para_ia})
 
-                response = st.session_state.chat_session.send_message(mensaje_para_ia)
-                st.markdown(response.text)
+                mensajes_para_groq = (
+                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    + st.session_state.historial_ia
+                )
+
+                respuesta = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=mensajes_para_groq,
+                )
+                texto_respuesta = respuesta.choices[0].message.content
+
+                st.session_state.historial_ia.append({"role": "assistant", "content": texto_respuesta})
+
+                st.markdown(texto_respuesta)
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": response.text}
+                    {"role": "assistant", "content": texto_respuesta}
                 )
 
                 # 2) Cara según cómo terminó: cantando > feliz (agradecimiento) > hablando
@@ -977,10 +988,10 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
 
                 # Si el modo conversación por voz está activo, Contín lee su respuesta en voz alta
                 if st.session_state.get("modo_voz"):
-                    hablar_texto(response.text)
+                    hablar_texto(texto_respuesta)
 
                 # Si la respuesta trae tablas, ofrecemos descargarlas en Excel
-                tablas = extraer_tablas_markdown(response.text)
+                tablas = extraer_tablas_markdown(texto_respuesta)
                 if tablas:
                     excel_bytes = generar_excel_desde_tablas(tablas)
                     st.download_button(
@@ -996,20 +1007,24 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                 with mascota_placeholder.container():
                     st.markdown(mascota_svg("normal"), unsafe_allow_html=True)
 
+                # Si falló, no dejamos el mensaje "colgado" en el historial de la IA
+                if st.session_state.historial_ia and st.session_state.historial_ia[-1]["role"] == "user":
+                    st.session_state.historial_ia.pop()
+
                 error_msg = str(e)
 
-                if "404" in error_msg:
+                if "401" in error_msg or "invalid_api_key" in error_msg.lower():
+                    st.error(
+                        "❌ Tu API Key de Groq no es válida. "
+                        "Genera una nueva en https://console.groq.com/keys"
+                    )
+                elif "404" in error_msg or "model_not_found" in error_msg.lower() or "decommissioned" in error_msg.lower():
                     st.error(
                         "❌ El modelo de IA no está disponible. "
-                        "Puede que Google haya cambiado el nombre del modelo. "
-                        "Revisa la variable MODEL_NAME en el código."
+                        "Puede que Groq haya renombrado o retirado el modelo. "
+                        "Revisa la variable MODEL_NAME en el código en https://console.groq.com/docs/models"
                     )
-                elif "403" in error_msg or "API key" in error_msg:
-                    st.error(
-                        "❌ Tu API Key no es válida o no tiene permisos. "
-                        "Genera una nueva en Google AI Studio."
-                    )
-                elif "429" in error_msg:
+                elif "429" in error_msg or "rate_limit" in error_msg.lower():
                     st.error(
                         "⏳ Se alcanzó el límite de uso gratuito por ahora. "
                         "Espera unos minutos e inténtalo de nuevo."
@@ -1019,16 +1034,14 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
 
 
 def transcribir_audio(audio_bytes: bytes):
-    """Envía el audio grabado a Gemini para transcribirlo a texto en español."""
+    """Envía el audio grabado al modelo Whisper de Groq para transcribirlo a
+    texto en español (Whisper es un modelo especializado solo para esto,
+    más preciso que pedirle a un modelo de texto que 'escuche')."""
     try:
-        respuesta = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=[
-                "Transcribe exactamente lo que dice el audio, en español. "
-                "Responde ÚNICAMENTE con la transcripción, sin comillas, sin "
-                "explicaciones ni texto adicional.",
-                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-            ],
+        respuesta = client.audio.transcriptions.create(
+            model=MODEL_TRANSCRIPCION,
+            file=("audio.wav", audio_bytes, "audio/wav"),
+            language="es",
         )
         texto = (respuesta.text or "").strip()
         return texto if texto else None
