@@ -4,6 +4,7 @@ from google.genai import types
 from datetime import datetime
 import pandas as pd
 import io
+import random
 from openpyxl.styles import Font
 
 # =========================================================
@@ -16,33 +17,148 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# ESTILOS PERSONALIZADOS (paleta cálida, look "de confianza")
+# ESTILOS PERSONALIZADOS — modo oscuro fijo, estilo "Gmail oscuro"
+# (fondo casi negro + acentos azules), con estrellitas animadas.
+# Al ser un tema FIJO (no depende del modo claro/oscuro del celular
+# o la laptop), el contraste de texto siempre queda correcto.
 # ---------------------------------------------------------
+AZUL_ACENTO = "#8AB4F8"     # azul estilo Google/Gmail modo oscuro
+AZUL_SUAVE = "#5B9BF0"
+FONDO_APP = "#0B0E14"
+FONDO_TARJETA = "#161B22"
+FONDO_BURBUJA_USUARIO = "#20262E"
+FONDO_BURBUJA_ASISTENTE = "#152232"
+TEXTO_CLARO = "#E8EAED"
+
+# Generamos posiciones aleatorias (pero fijas por sesión) para las estrellitas
+random.seed(7)
+_estrellas_html = ""
+for i in range(35):
+    top = random.uniform(0, 100)
+    left = random.uniform(0, 100)
+    tamano = random.uniform(2, 4)
+    duracion = random.uniform(4, 9)
+    retraso = random.uniform(0, 6)
+    _estrellas_html += (
+        f'<div class="estrella" style="'
+        f'top:{top}%; left:{left}%; width:{tamano}px; height:{tamano}px; '
+        f'animation-duration:{duracion}s; animation-delay:{retraso}s;"></div>'
+    )
+
 st.markdown(
-    """
+    f"""
     <style>
-    .stApp {
-        background: linear-gradient(180deg, #FAF7F2 0%, #FFFFFF 100%);
-    }
-    .main .block-container {
+    /* ---------- Fondo general y estrellitas animadas ---------- */
+    .stApp {{
+        background: radial-gradient(ellipse at top, #10141f 0%, {FONDO_APP} 60%) !important;
+    }}
+
+    .campo-estrellas {{
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        overflow: hidden;
+        pointer-events: none;
+        z-index: 0;
+    }}
+    .estrella {{
+        position: absolute;
+        background: {AZUL_ACENTO};
+        border-radius: 50%;
+        opacity: 0.25;
+        box-shadow: 0 0 6px 1px {AZUL_ACENTO};
+        animation-name: flotar, titilar;
+        animation-iteration-count: infinite;
+        animation-timing-function: ease-in-out;
+    }}
+    @keyframes flotar {{
+        0%   {{ transform: translateY(0px); }}
+        50%  {{ transform: translateY(-18px); }}
+        100% {{ transform: translateY(0px); }}
+    }}
+    @keyframes titilar {{
+        0%, 100% {{ opacity: 0.15; }}
+        50%      {{ opacity: 0.7; }}
+    }}
+
+    /* Todo el contenido va por encima del campo de estrellas */
+    .main .block-container {{
         padding-top: 2rem;
-    }
-    h1 {
-        color: #2D5C4D !important;
-    }
-    [data-testid="stChatMessage"] {
+        position: relative;
+        z-index: 1;
+    }}
+
+    /* ---------- Texto general (arregla el problema de contraste) ---------- */
+    .stApp, .stApp p, .stApp li, .stApp span, .stApp label,
+    [data-testid="stMarkdownContainer"] {{
+        color: {TEXTO_CLARO} !important;
+    }}
+    h1 {{
+        color: {AZUL_ACENTO} !important;
+    }}
+    h2, h3, h4 {{
+        color: {AZUL_SUAVE} !important;
+    }}
+    a {{ color: {AZUL_ACENTO} !important; }}
+
+    /* ---------- Barra lateral ---------- */
+    section[data-testid="stSidebar"] {{
+        background-color: {FONDO_TARJETA} !important;
+        border-right: 1px solid #23293380;
+    }}
+    section[data-testid="stSidebar"] * {{
+        color: {TEXTO_CLARO} !important;
+    }}
+
+    /* ---------- Burbujas de chat ---------- */
+    [data-testid="stChatMessage"] {{
         border-radius: 16px;
-    }
-    .stChatMessage {
-        padding: 0.5rem 0.2rem;
-    }
-    section[data-testid="stSidebar"] {
-        background-color: #F1EBE0;
-    }
-    .stButton button {
+        border: 1px solid #23293380;
+    }}
+    [data-testid="stChatMessage"]:nth-of-type(odd) {{
+        background-color: {FONDO_BURBUJA_USUARIO} !important;
+    }}
+    [data-testid="stChatMessage"]:nth-of-type(even) {{
+        background-color: {FONDO_BURBUJA_ASISTENTE} !important;
+        border-left: 3px solid {AZUL_ACENTO};
+    }}
+
+    /* ---------- Caja de texto del chat ---------- */
+    [data-testid="stChatInput"] textarea {{
+        background-color: {FONDO_TARJETA} !important;
+        color: {TEXTO_CLARO} !important;
+    }}
+    [data-testid="stChatInput"] {{
+        background-color: {FONDO_TARJETA} !important;
+        border: 1px solid {AZUL_ACENTO}55 !important;
+    }}
+
+    /* ---------- Botones ---------- */
+    .stButton button, .stDownloadButton button {{
         border-radius: 12px;
-    }
+        background-color: {AZUL_ACENTO} !important;
+        color: #0B0E14 !important;
+        border: none !important;
+        font-weight: 600;
+    }}
+    .stButton button:hover, .stDownloadButton button:hover {{
+        background-color: {AZUL_SUAVE} !important;
+    }}
+
+    /* ---------- Expanders (paneles de voz y Excel) ---------- */
+    [data-testid="stExpander"] {{
+        background-color: {FONDO_TARJETA} !important;
+        border-radius: 12px;
+        border: 1px solid #23293380;
+    }}
+
+    /* ---------- Radios (nivel) ---------- */
+    [data-testid="stSidebar"] [role="radiogroup"] label {{
+        color: {TEXTO_CLARO} !important;
+    }}
     </style>
+
+    <div class="campo-estrellas">{_estrellas_html}</div>
     """,
     unsafe_allow_html=True,
 )
