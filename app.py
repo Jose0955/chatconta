@@ -757,12 +757,6 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.caption(
-        "**1.º:** Conceptos básicos, ecuación contable, asientos simples.\n\n"
-        "**2.º:** Ajustes, depreciaciones, IVA, retenciones, balances.\n\n"
-        "**3.º:** Costos, Kardex (PEPS/Promedio), rol de pagos."
-    )
-
     if MATERIAL_DOCENTES_ARCHIVOS:
         with st.expander(f"📚 Material de docentes ({len(MATERIAL_DOCENTES_ARCHIVOS)} archivo(s))"):
             for nombre in MATERIAL_DOCENTES_ARCHIVOS:
@@ -770,56 +764,11 @@ with st.sidebar:
     else:
         st.caption("📚 Sin material de docentes cargado todavía.")
 
-    st.markdown("---")
-    if st.button("🗑️ Empezar de nuevo"):
-        st.session_state.messages = []
-        st.session_state.historial_ia = []
-        st.session_state.ultimo_audio_id = None
-        st.session_state.audio_widget_key = st.session_state.get("audio_widget_key", 0) + 1
-        st.session_state.quiz_actual = None
-        st.rerun()
-
-    st.markdown("---")
-    st.caption("🎯 Ponte a prueba")
-    if st.button("🎯 Generar quiz del último tema"):
-        if st.session_state.get("messages"):
-            ultimos = st.session_state.messages[-4:]  # últimas 1-2 preguntas y respuestas
-            contexto_quiz = "\n".join(f"{m['role']}: {m['content']}" for m in ultimos)
-        else:
-            contexto_quiz = f"Conceptos generales de contabilidad de {nivel}."
-        with st.spinner("Contín está armando tu quiz..."):
-            preguntas = generar_quiz(contexto_quiz)
-        if preguntas:
-            st.session_state.quiz_id = st.session_state.get("quiz_id", 0) + 1
-            st.session_state.quiz_actual = {"preguntas": preguntas, "tema": contexto_quiz[:80]}
-            st.rerun()
-
-    st.markdown("---")
-    st.caption("🐙 Contín")
-    if "bailando" not in st.session_state:
-        st.session_state.bailando = False
-    if "modo_voz" not in st.session_state:
-        st.session_state.modo_voz = False
-
-    if st.button("🕺 ¡Que baile Contín!" if not st.session_state.bailando else "⏹️ Parar de bailar"):
-        st.session_state.bailando = not st.session_state.bailando
-        st.rerun()
-
-    if st.button(
-        "🎤 Activar modo conversación por voz" if not st.session_state.modo_voz
-        else "🔇 Salir del modo conversación por voz"
-    ):
-        st.session_state.modo_voz = not st.session_state.modo_voz
-        st.rerun()
-
-    if st.session_state.modo_voz:
-        st.caption("🔊 Contín te va a responder también en audio. Usa el panel '🎤 Preguntar por voz' de arriba para hablarle.")
-        if st.button("❌ Cancelar audio"):
-            components.html(
-                "<script>try{window.speechSynthesis.cancel();}catch(e){}</script>",
-                height=0,
-            )
-            st.rerun()
+# Inicialización de estados que ahora se controlan desde el "➕" junto al chat
+if "bailando" not in st.session_state:
+    st.session_state.bailando = False
+if "modo_voz" not in st.session_state:
+    st.session_state.modo_voz = False
 
 # =========================================================
 # 3. PROMPT DEL SISTEMA (se adapta según el nivel elegido)
@@ -1419,67 +1368,6 @@ def convertir_excel_a_texto(hojas: dict) -> str:
 
 
 # =========================================================
-# 5. SUBIR EJERCICIO EN EXCEL
-# =========================================================
-if "excel_context" not in st.session_state:
-    st.session_state.excel_context = None
-if "excel_pendiente" not in st.session_state:
-    st.session_state.excel_pendiente = False
-if "excel_widget_key" not in st.session_state:
-    st.session_state.excel_widget_key = 0
-if "excel_original_bytes" not in st.session_state:
-    st.session_state.excel_original_bytes = None
-if "excel_original_nombre" not in st.session_state:
-    st.session_state.excel_original_nombre = None
-
-with st.expander("📎 Subir ejercicio en Excel", expanded=st.session_state.excel_pendiente):
-    archivo_excel = st.file_uploader(
-        "Sube un archivo .xlsx con tu ejercicio (asientos, balances, estados financieros, etc.)",
-        type=["xlsx", "xls"],
-        key=f"excel_{st.session_state.excel_widget_key}",
-    )
-
-    if archivo_excel is not None:
-        excel_id = f"{archivo_excel.name}-{archivo_excel.size}"
-        if st.session_state.get("ultimo_excel_id") != excel_id:
-            st.session_state.ultimo_excel_id = excel_id
-            try:
-                bytes_originales = archivo_excel.getvalue()
-                hojas = pd.read_excel(io.BytesIO(bytes_originales), sheet_name=None)
-                st.session_state.excel_context = convertir_excel_a_texto(hojas)
-                st.session_state.excel_original_bytes = bytes_originales
-                st.session_state.excel_original_nombre = archivo_excel.name
-                st.session_state.excel_pendiente = True
-                st.success(
-                    f"✅ Listo, cargué **{archivo_excel.name}** ({len(hojas)} hoja(s)). "
-                    "Ahora escríbeme abajo qué quieres que haga con estos datos — por ejemplo: "
-                    "'resuélveme estos asientos', 'haz un análisis horizontal entre 2023 y 2024', "
-                    "o 'haz el análisis vertical del balance'."
-                )
-                for nombre_hoja, df in hojas.items():
-                    with st.expander(f"👀 Vista previa: {nombre_hoja}"):
-                        st.dataframe(df)
-            except Exception as e:
-                st.error(f"No pude leer el archivo. Detalle técnico: {e}")
-
-    if st.session_state.excel_context is not None:
-        if st.button("🗑️ Quitar este archivo"):
-            st.session_state.excel_context = None
-            st.session_state.excel_pendiente = False
-            st.session_state.excel_original_bytes = None
-            st.session_state.excel_original_nombre = None
-            st.session_state.excel_widget_key += 1
-            st.rerun()
-
-# Aviso bien visible (fuera del panel plegable) de que hay un archivo
-# esperando a ser usado en la próxima pregunta — para que no quede la duda.
-if st.session_state.excel_pendiente and st.session_state.excel_original_nombre:
-    st.info(
-        f"📎 Tengo cargado **{st.session_state.excel_original_nombre}**. "
-        "Escribe tu instrucción abajo y lo voy a usar en mi próxima respuesta."
-    )
-
-# =========================================================
 # 6. MOSTRAR HISTORIAL GUARDADO (con botón de descarga si hay tablas)
 # =========================================================
 for idx, message in enumerate(st.session_state.messages):
@@ -1502,52 +1390,97 @@ mostrar_quiz()
 
 
 # =========================================================
-# 7. ENTRADA POR VOZ (graba y transcribe, pero se procesa en el flujo principal)
+# 7. BARRA DE CONTROLES (➕ opciones y modo voz) + CAJA DE CHAT
+# La caja de chat usa las funciones nativas de Streamlit para adjuntar
+# Excel y grabar audio, así que ambas cosas aparecen como iconitos DENTRO
+# de la misma caja donde se escribe — no hace falta paneles aparte arriba.
 # =========================================================
-pregunta_por_voz = None
+col_mas, col_voz = st.columns([1, 4])
 
-if "audio_widget_key" not in st.session_state:
-    st.session_state.audio_widget_key = 0
+with col_mas:
+    with st.popover("➕"):
+        st.caption("Más opciones")
 
-with st.expander("🎤 Preguntar por voz", expanded=st.session_state.get("modo_voz", False)):
-    audio_grabado = st.audio_input(
-        "Graba tu pregunta y suéltala, Contín la transcribe sola",
-        key=f"audio_{st.session_state.audio_widget_key}",
-    )
+        if st.button("🕺 ¡Que baile Contín!" if not st.session_state.bailando else "⏹️ Parar de bailar"):
+            st.session_state.bailando = not st.session_state.bailando
+            st.rerun()
 
-    if audio_grabado is not None:
-        # Evita reprocesar el mismo audio si Streamlit vuelve a correr el script
-        audio_id = f"{audio_grabado.name}-{audio_grabado.size}"
-        if st.session_state.get("ultimo_audio_id") != audio_id:
-            st.session_state.ultimo_audio_id = audio_id
-            with st.spinner("Transcribiendo tu pregunta..."):
-                texto_transcrito = transcribir_audio(audio_grabado.getvalue())
-            if texto_transcrito:
-                st.caption(f"🗣️ Escuché: “{texto_transcrito}”")
-                pregunta_por_voz = texto_transcrito
+        if st.button("🎯 Generar quiz del último tema"):
+            if st.session_state.get("messages"):
+                ultimos = st.session_state.messages[-4:]
+                contexto_quiz = "\n".join(f"{m['role']}: {m['content']}" for m in ultimos)
+            else:
+                contexto_quiz = f"Conceptos generales de contabilidad de {nivel}."
+            with st.spinner("Contín está armando tu quiz..."):
+                preguntas = generar_quiz(contexto_quiz)
+            if preguntas:
+                st.session_state.quiz_id = st.session_state.get("quiz_id", 0) + 1
+                st.session_state.quiz_actual = {"preguntas": preguntas, "tema": contexto_quiz[:80]}
+                st.rerun()
 
-# =========================================================
-# 8. ENTRADA POR TEXTO
-# =========================================================
-pregunta_por_texto = st.chat_input(
-    "Ejemplo: ¿Cómo registro una compra de $1,300 con retención de IVA y de la fuente?"
+        st.markdown("---")
+        if st.button("🗑️ Empezar de nuevo"):
+            st.session_state.messages = []
+            st.session_state.historial_ia = []
+            st.session_state.quiz_actual = None
+            st.rerun()
+
+with col_voz:
+    if st.button(
+        "🔊 Conversación por voz: Activada" if st.session_state.modo_voz
+        else "🔈 Activar conversación por voz"
+    ):
+        st.session_state.modo_voz = not st.session_state.modo_voz
+        st.rerun()
+
+if st.session_state.modo_voz:
+    if st.button("❌ Cancelar audio"):
+        components.html(
+            "<script>try{window.speechSynthesis.cancel();}catch(e){}</script>",
+            height=0,
+        )
+        st.rerun()
+
+prompt = st.chat_input(
+    "Escríbeme tu pregunta, adjunta un Excel (📎) o graba tu voz (🎤)...",
+    accept_file=True,
+    file_type=["xlsx", "xls"],
+    accept_audio=True,
 )
 
 # =========================================================
-# 9. PROCESAR LA PREGUNTA (venga de voz o de texto, con o sin Excel adjunto)
+# 8. PROCESAR LO QUE LLEGÓ (texto, audio y/o Excel, todo puede venir junto)
 # =========================================================
-pregunta_final = pregunta_por_texto or pregunta_por_voz
-if pregunta_final:
-    if st.session_state.excel_pendiente:
-        contexto = st.session_state.excel_context
-        bytes_originales = st.session_state.excel_original_bytes
-        nombre_original = st.session_state.excel_original_nombre
-        st.session_state.excel_pendiente = False  # solo se usa en el siguiente mensaje
+if prompt:
+    texto_usuario = None
+    contexto_excel = None
+    bytes_excel_original = None
+    nombre_excel_original = None
+
+    # Si grabó audio, lo transcribimos primero
+    if getattr(prompt, "audio", None):
+        with st.spinner("Transcribiendo tu audio..."):
+            texto_usuario = transcribir_audio(prompt.audio.getvalue())
+    elif getattr(prompt, "text", None):
+        texto_usuario = prompt.text
+
+    # Si adjuntó un Excel, lo leemos y lo dejamos listo como contexto extra
+    if getattr(prompt, "files", None):
+        archivo_excel = prompt.files[0]
+        try:
+            bytes_excel_original = archivo_excel.getvalue()
+            hojas = pd.read_excel(io.BytesIO(bytes_excel_original), sheet_name=None)
+            contexto_excel = convertir_excel_a_texto(hojas)
+            nombre_excel_original = archivo_excel.name
+            if not texto_usuario:
+                texto_usuario = "Resuelve el ejercicio de este archivo Excel."
+        except Exception as e:
+            st.error(f"No pude leer el archivo adjunto. Detalle técnico: {e}")
+
+    if texto_usuario:
         responder_pregunta(
-            pregunta_final,
-            contexto_extra=contexto,
-            excel_original_bytes=bytes_originales,
-            excel_original_nombre=nombre_original,
+            texto_usuario,
+            contexto_extra=contexto_excel,
+            excel_original_bytes=bytes_excel_original,
+            excel_original_nombre=nombre_excel_original,
         )
-    else:
-        responder_pregunta(pregunta_final)
