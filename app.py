@@ -1159,7 +1159,51 @@ def generar_excel_desde_tablas(tablas):
     return buffer.getvalue()
 
 
-def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
+def generar_excel_con_original(tablas, bytes_originales: bytes):
+    """Igual que generar_excel_desde_tablas, PERO en vez de crear un libro
+    en blanco, parte del Excel que subió el estudiante y le AGREGA hojas
+    nuevas con la solución de Contín — así el archivo descargable es el
+    mismo que subió, más la resolución, en vez de uno completamente nuevo."""
+    import openpyxl
+
+    try:
+        libro = openpyxl.load_workbook(io.BytesIO(bytes_originales))
+    except Exception:
+        # Si por algún motivo no se puede abrir el original, no rompemos
+        # nada: devolvemos igual un Excel nuevo con la solución.
+        return generar_excel_desde_tablas(tablas)
+
+    for idx, df in enumerate(tablas, start=1):
+        nombre_base = f"Solución Contín {idx}"[:31]
+        nombre_hoja = nombre_base
+        contador = 1
+        while nombre_hoja in libro.sheetnames:
+            contador += 1
+            nombre_hoja = f"{nombre_base} ({contador})"[:31]
+
+        hoja = libro.create_sheet(nombre_hoja)
+        for col_idx, nombre_columna in enumerate(df.columns, start=1):
+            celda = hoja.cell(row=1, column=col_idx, value=str(nombre_columna))
+            celda.font = Font(bold=True, name="Arial")
+        for fila_idx, fila in enumerate(df.itertuples(index=False), start=2):
+            for col_idx, valor in enumerate(fila, start=1):
+                hoja.cell(row=fila_idx, column=col_idx, value=valor).font = Font(name="Arial")
+        for columna in hoja.columns:
+            largo = max((len(str(c.value)) if c.value else 0) for c in columna)
+            hoja.column_dimensions[columna[0].column_letter].width = min(max(largo + 2, 10), 40)
+
+    buffer = io.BytesIO()
+    libro.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def responder_pregunta(
+    texto_mostrado: str,
+    contexto_extra: str = None,
+    excel_original_bytes: bytes = None,
+    excel_original_nombre: str = None,
+):
     """
     texto_mostrado: lo que se ve en la burbuja de chat y se guarda en el historial visible.
     contexto_extra: información adicional (p.ej. datos de un Excel) que se le manda a la IA
@@ -1189,6 +1233,8 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
     st.session_state.messages.append({"role": "user", "content": texto_mostrado})
     with st.chat_message("user", avatar="🙂"):
         st.markdown(texto_mostrado)
+        if contexto_extra and excel_original_nombre:
+            st.caption(f"📎 Usando los datos de tu archivo: **{excel_original_nombre}**")
 
     mensaje_para_ia = f"{contexto_extra}\n\nInstrucción del estudiante: {texto_mostrado}" if contexto_extra else texto_mostrado
 
@@ -1235,14 +1281,22 @@ def responder_pregunta(texto_mostrado: str, contexto_extra: str = None):
                 if st.session_state.get("modo_voz"):
                     hablar_texto(texto_respuesta)
 
-                # Si la respuesta trae tablas, ofrecemos descargarlas en Excel
+                # Si la respuesta trae tablas, ofrecemos descargarlas en Excel.
+                # Si esta respuesta usó un archivo que subió el estudiante,
+                # el Excel descargable es SU MISMO ARCHIVO + una hoja nueva
+                # con la solución (en vez de un archivo en blanco).
                 tablas = extraer_tablas_markdown(texto_respuesta)
                 if tablas:
-                    excel_bytes = generar_excel_desde_tablas(tablas)
+                    if excel_original_bytes:
+                        excel_bytes = generar_excel_con_original(tablas, excel_original_bytes)
+                        etiqueta_boton = "📥 Descargar tu Excel + la solución"
+                    else:
+                        excel_bytes = generar_excel_desde_tablas(tablas)
+                        etiqueta_boton = "📥 Descargar esta respuesta en Excel"
                     st.download_button(
-                        "📥 Descargar esta respuesta en Excel",
+                        etiqueta_boton,
                         data=excel_bytes,
-                        file_name="contin_resultado.xlsx",
+                        file_name=(excel_original_nombre or "contin_resultado.xlsx"),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key=f"descarga_{len(st.session_state.messages)}",
                     )
@@ -1312,8 +1366,12 @@ if "excel_pendiente" not in st.session_state:
     st.session_state.excel_pendiente = False
 if "excel_widget_key" not in st.session_state:
     st.session_state.excel_widget_key = 0
+if "excel_original_bytes" not in st.session_state:
+    st.session_state.excel_original_bytes = None
+if "excel_original_nombre" not in st.session_state:
+    st.session_state.excel_original_nombre = None
 
-with st.expander("📎 Subir ejercicio en Excel"):
+with st.expander("📎 Subir ejercicio en Excel", expanded=st.session_state.excel_pendiente):
     archivo_excel = st.file_uploader(
         "Sube un archivo .xlsx con tu ejercicio (asientos, balances, estados financieros, etc.)",
         type=["xlsx", "xls"],
@@ -1325,8 +1383,11 @@ with st.expander("📎 Subir ejercicio en Excel"):
         if st.session_state.get("ultimo_excel_id") != excel_id:
             st.session_state.ultimo_excel_id = excel_id
             try:
-                hojas = pd.read_excel(archivo_excel, sheet_name=None)
+                bytes_originales = archivo_excel.getvalue()
+                hojas = pd.read_excel(io.BytesIO(bytes_originales), sheet_name=None)
                 st.session_state.excel_context = convertir_excel_a_texto(hojas)
+                st.session_state.excel_original_bytes = bytes_originales
+                st.session_state.excel_original_nombre = archivo_excel.name
                 st.session_state.excel_pendiente = True
                 st.success(
                     f"✅ Listo, cargué **{archivo_excel.name}** ({len(hojas)} hoja(s)). "
@@ -1344,8 +1405,18 @@ with st.expander("📎 Subir ejercicio en Excel"):
         if st.button("🗑️ Quitar este archivo"):
             st.session_state.excel_context = None
             st.session_state.excel_pendiente = False
+            st.session_state.excel_original_bytes = None
+            st.session_state.excel_original_nombre = None
             st.session_state.excel_widget_key += 1
             st.rerun()
+
+# Aviso bien visible (fuera del panel plegable) de que hay un archivo
+# esperando a ser usado en la próxima pregunta — para que no quede la duda.
+if st.session_state.excel_pendiente and st.session_state.excel_original_nombre:
+    st.info(
+        f"📎 Tengo cargado **{st.session_state.excel_original_nombre}**. "
+        "Escribe tu instrucción abajo y lo voy a usar en mi próxima respuesta."
+    )
 
 # =========================================================
 # 6. MOSTRAR HISTORIAL GUARDADO (con botón de descarga si hay tablas)
@@ -1408,7 +1479,14 @@ pregunta_final = pregunta_por_texto or pregunta_por_voz
 if pregunta_final:
     if st.session_state.excel_pendiente:
         contexto = st.session_state.excel_context
+        bytes_originales = st.session_state.excel_original_bytes
+        nombre_original = st.session_state.excel_original_nombre
         st.session_state.excel_pendiente = False  # solo se usa en el siguiente mensaje
-        responder_pregunta(pregunta_final, contexto_extra=contexto)
+        responder_pregunta(
+            pregunta_final,
+            contexto_extra=contexto,
+            excel_original_bytes=bytes_originales,
+            excel_original_nombre=nombre_original,
+        )
     else:
         responder_pregunta(pregunta_final)
