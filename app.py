@@ -1139,22 +1139,91 @@ def extraer_tablas_markdown(texto: str):
     return tablas
 
 
+PATRON_PORCENTAJE = re.compile(r"^-?[\d.,]+\s*%$")
+FORMATO_MONEDA = '"$"#,##0.00'
+FORMATO_PORCENTAJE = "0.00%"
+
+
+def _parsear_numero(texto: str):
+    """Intenta convertir '$1,300.50' o '20%' o '1300' a un float. Devuelve
+    None si el texto no es un número reconocible (para no dañar texto normal)."""
+    limpio = texto.replace("$", "").replace(",", "").replace("%", "").strip()
+    if limpio in ("", "-"):
+        return None
+    try:
+        return float(limpio)
+    except ValueError:
+        return None
+
+
+def escribir_tabla_en_hoja(hoja, df: pd.DataFrame):
+    """Escribe un DataFrame en una hoja de Excel, PERO de forma inteligente:
+    - Los montos en dólares ($) se guardan como número con formato moneda USD.
+    - Los porcentajes (%) se guardan como número con formato de porcentaje.
+    - Las filas de "Total" / "Suma" / "Subtotal" usan una fórmula real de
+      Excel (=SUMA de la columna) en vez de un número fijo, para que se
+      recalcule solo si alguien edita un valor de arriba.
+    Todo lo demás (texto normal, fechas, nombres de cuentas) se deja tal cual."""
+    for col_idx, nombre_columna in enumerate(df.columns, start=1):
+        celda = hoja.cell(row=1, column=col_idx, value=str(nombre_columna))
+        celda.font = Font(bold=True, name="Arial")
+
+    filas_valores = df.values.tolist()
+
+    for fila_idx, fila in enumerate(filas_valores, start=2):
+        primera_celda_texto = str(fila[0]) if len(fila) > 0 else ""
+        es_fila_total = bool(re.search(r"\btotal(es)?\b|\bsuma\b|\bsubtotal\b", primera_celda_texto, re.IGNORECASE))
+
+        for col_idx, valor in enumerate(fila, start=1):
+            texto_valor = str(valor).strip() if valor is not None else ""
+            celda = hoja.cell(row=fila_idx, column=col_idx)
+            celda.font = Font(name="Arial")
+
+            # Fila de "Total": ponemos una fórmula SUMA real de Excel,
+            # que suma todo lo que hay arriba en esa misma columna.
+            if es_fila_total and col_idx > 1:
+                letra_col = celda.column_letter
+                celda.value = f"=SUM({letra_col}2:{letra_col}{fila_idx - 1})"
+                celda.number_format = FORMATO_MONEDA
+                continue
+
+            # Porcentajes explícitos ("20%", "15.5%")
+            if PATRON_PORCENTAJE.match(texto_valor):
+                numero = _parsear_numero(texto_valor)
+                if numero is not None:
+                    celda.value = numero / 100
+                    celda.number_format = FORMATO_PORCENTAJE
+                    continue
+
+            # Montos en dólares explícitos ("$1,300.00")
+            if texto_valor.startswith("$"):
+                numero = _parsear_numero(texto_valor)
+                if numero is not None:
+                    celda.value = numero
+                    celda.number_format = FORMATO_MONEDA
+                    continue
+
+            # Cualquier otra cosa (texto, fechas, nombres de cuentas) tal cual
+            celda.value = valor
+
+    for columna in hoja.columns:
+        largo = max((len(str(c.value)) if c.value else 0) for c in columna)
+        hoja.column_dimensions[columna[0].column_letter].width = min(max(largo + 2, 10), 40)
+
+
 def generar_excel_desde_tablas(tablas):
-    """Convierte una lista de DataFrames en un archivo .xlsx (en memoria) con
-    formato profesional básico: fuente Arial y encabezados en negrita."""
+    """Convierte una lista de DataFrames en un archivo .xlsx (en memoria),
+    con fórmulas reales de SUMA para los totales, formato moneda ($) para
+    montos, y formato de porcentaje donde corresponda."""
+    import openpyxl
+
+    libro = openpyxl.Workbook()
+    libro.remove(libro.active)
+    for idx, df in enumerate(tablas, start=1):
+        hoja = libro.create_sheet(f"Tabla {idx}")
+        escribir_tabla_en_hoja(hoja, df)
     buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for idx, df in enumerate(tablas, start=1):
-            df.to_excel(writer, sheet_name=f"Tabla {idx}", index=False)
-        for hoja in writer.book.worksheets:
-            for celda in hoja[1]:
-                celda.font = Font(bold=True, name="Arial")
-            for fila in hoja.iter_rows(min_row=2):
-                for celda in fila:
-                    celda.font = Font(name="Arial")
-            for columna in hoja.columns:
-                largo = max((len(str(c.value)) if c.value else 0) for c in columna)
-                hoja.column_dimensions[columna[0].column_letter].width = min(max(largo + 2, 10), 40)
+    libro.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -1182,15 +1251,7 @@ def generar_excel_con_original(tablas, bytes_originales: bytes):
             nombre_hoja = f"{nombre_base} ({contador})"[:31]
 
         hoja = libro.create_sheet(nombre_hoja)
-        for col_idx, nombre_columna in enumerate(df.columns, start=1):
-            celda = hoja.cell(row=1, column=col_idx, value=str(nombre_columna))
-            celda.font = Font(bold=True, name="Arial")
-        for fila_idx, fila in enumerate(df.itertuples(index=False), start=2):
-            for col_idx, valor in enumerate(fila, start=1):
-                hoja.cell(row=fila_idx, column=col_idx, value=valor).font = Font(name="Arial")
-        for columna in hoja.columns:
-            largo = max((len(str(c.value)) if c.value else 0) for c in columna)
-            hoja.column_dimensions[columna[0].column_letter].width = min(max(largo + 2, 10), 40)
+        escribir_tabla_en_hoja(hoja, df)
 
     buffer = io.BytesIO()
     libro.save(buffer)
