@@ -22,6 +22,86 @@ def hojas_excel_a_markdown(hojas: dict) -> str:
         partes.append(df.to_markdown(index=False))
     return "\n".join(partes)
 
+
+# ---------------------------------------------------------
+# MATERIAL DE CLASE SUBIDO POR LOS DOCENTES
+# Los docentes NO suben archivos desde la app (eso requeriría una base de
+# datos); en vez de eso, suben sus archivos directamente a la carpeta
+# "material_docentes/" del repositorio de GitHub, y Contín los lee solo
+# al arrancar. Soporta: .txt, .md, .xlsx/.xls, .pdf, .pptx
+# Esto se carga AL INICIO del archivo (antes que todo lo demás) porque
+# tanto la barra lateral como el prompt del sistema lo necesitan.
+# ---------------------------------------------------------
+CARPETA_MATERIAL_DOCENTES = "material_docentes"
+LARGO_MAXIMO_MATERIAL = 6000  # límite de caracteres para no disparar el consumo de tokens
+
+
+@st.cache_data(show_spinner=False)
+def cargar_material_docentes():
+    """Lee todos los archivos de la carpeta material_docentes/ y arma un
+    texto resumido para dárselo a Contín como referencia extra. Si un
+    archivo falla al leerse, simplemente se lo salta (no rompe la app)."""
+    if not os.path.isdir(CARPETA_MATERIAL_DOCENTES):
+        return "", []
+
+    partes = []
+    archivos_cargados = []
+
+    for nombre_archivo in sorted(os.listdir(CARPETA_MATERIAL_DOCENTES)):
+        if nombre_archivo.startswith(".") or nombre_archivo.upper().startswith("README"):
+            continue
+        ruta = os.path.join(CARPETA_MATERIAL_DOCENTES, nombre_archivo)
+        if not os.path.isfile(ruta):
+            continue
+        extension = nombre_archivo.lower().rsplit(".", 1)[-1] if "." in nombre_archivo else ""
+
+        try:
+            texto_archivo = None
+
+            if extension in ("txt", "md"):
+                with open(ruta, "r", encoding="utf-8", errors="ignore") as f:
+                    texto_archivo = f.read()
+
+            elif extension in ("xlsx", "xls"):
+                hojas = pd.read_excel(ruta, sheet_name=None)
+                texto_archivo = hojas_excel_a_markdown(hojas)
+
+            elif extension == "pdf":
+                from pypdf import PdfReader
+                lector = PdfReader(ruta)
+                paginas_texto = [(p.extract_text() or "") for p in lector.pages[:20]]
+                texto_archivo = "\n".join(paginas_texto)
+
+            elif extension == "pptx":
+                from pptx import Presentation
+                presentacion = Presentation(ruta)
+                lineas = []
+                for diapositiva in presentacion.slides:
+                    for forma in diapositiva.shapes:
+                        if forma.has_text_frame:
+                            texto_forma = forma.text_frame.text.strip()
+                            if texto_forma:
+                                lineas.append(texto_forma)
+                texto_archivo = "\n".join(lineas)
+
+            if texto_archivo and texto_archivo.strip():
+                partes.append(f"--- Material del docente: {nombre_archivo} ---\n{texto_archivo.strip()}")
+                archivos_cargados.append(nombre_archivo)
+
+        except Exception:
+            # Si un archivo específico falla (formato raro, corrupto, etc.),
+            # lo saltamos sin tumbar el resto de la app.
+            continue
+
+    texto_completo = "\n\n".join(partes)
+    if len(texto_completo) > LARGO_MAXIMO_MATERIAL:
+        texto_completo = texto_completo[:LARGO_MAXIMO_MATERIAL] + "\n[...material recortado por espacio...]"
+
+    return texto_completo, archivos_cargados
+
+
+MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
+
 # =========================================================
 # CONFIGURACIÓN GENERAL DE LA PÁGINA
 # =========================================================
@@ -876,83 +956,6 @@ FECHA_ACTUAL_TEXTO = (
     f"{DIAS_ES[AHORA.weekday()]} {AHORA.day} de {MESES_ES[AHORA.month - 1]} de {AHORA.year}, "
     f"aproximadamente las {AHORA.strftime('%H:%M')}"
 )
-
-# ---------------------------------------------------------
-# MATERIAL DE CLASE SUBIDO POR LOS DOCENTES
-# Los docentes NO suben archivos desde la app (eso requeriría una base de
-# datos); en vez de eso, suben sus archivos directamente a la carpeta
-# "material_docentes/" del repositorio de GitHub, y Contín los lee solo
-# al arrancar. Soporta: .txt, .md, .xlsx/.xls, .pdf, .pptx
-# ---------------------------------------------------------
-CARPETA_MATERIAL_DOCENTES = "material_docentes"
-LARGO_MAXIMO_MATERIAL = 6000  # límite de caracteres para no disparar el consumo de tokens
-
-
-@st.cache_data(show_spinner=False)
-def cargar_material_docentes():
-    """Lee todos los archivos de la carpeta material_docentes/ y arma un
-    texto resumido para dárselo a Contín como referencia extra. Si un
-    archivo falla al leerse, simplemente se lo salta (no rompe la app)."""
-    if not os.path.isdir(CARPETA_MATERIAL_DOCENTES):
-        return "", []
-
-    partes = []
-    archivos_cargados = []
-
-    for nombre_archivo in sorted(os.listdir(CARPETA_MATERIAL_DOCENTES)):
-        if nombre_archivo.startswith(".") or nombre_archivo.upper().startswith("README"):
-            continue
-        ruta = os.path.join(CARPETA_MATERIAL_DOCENTES, nombre_archivo)
-        if not os.path.isfile(ruta):
-            continue
-        extension = nombre_archivo.lower().rsplit(".", 1)[-1] if "." in nombre_archivo else ""
-
-        try:
-            texto_archivo = None
-
-            if extension in ("txt", "md"):
-                with open(ruta, "r", encoding="utf-8", errors="ignore") as f:
-                    texto_archivo = f.read()
-
-            elif extension in ("xlsx", "xls"):
-                hojas = pd.read_excel(ruta, sheet_name=None)
-                texto_archivo = hojas_excel_a_markdown(hojas)
-
-            elif extension == "pdf":
-                from pypdf import PdfReader
-                lector = PdfReader(ruta)
-                paginas_texto = [(p.extract_text() or "") for p in lector.pages[:20]]
-                texto_archivo = "\n".join(paginas_texto)
-
-            elif extension == "pptx":
-                from pptx import Presentation
-                presentacion = Presentation(ruta)
-                lineas = []
-                for diapositiva in presentacion.slides:
-                    for forma in diapositiva.shapes:
-                        if forma.has_text_frame:
-                            texto_forma = forma.text_frame.text.strip()
-                            if texto_forma:
-                                lineas.append(texto_forma)
-                texto_archivo = "\n".join(lineas)
-
-            if texto_archivo and texto_archivo.strip():
-                partes.append(f"--- Material del docente: {nombre_archivo} ---\n{texto_archivo.strip()}")
-                archivos_cargados.append(nombre_archivo)
-
-        except Exception:
-            # Si un archivo específico falla (formato raro, corrupto, etc.),
-            # lo saltamos sin tumbar el resto de la app.
-            continue
-
-    texto_completo = "\n\n".join(partes)
-    if len(texto_completo) > LARGO_MAXIMO_MATERIAL:
-        texto_completo = texto_completo[:LARGO_MAXIMO_MATERIAL] + "\n[...material recortado por espacio...]"
-
-    return texto_completo, archivos_cargados
-
-
-MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
 
 SYSTEM_PROMPT = f"""
 Eres "Contín", un tutor virtual de Contabilidad para estudiantes de Bachillerato
