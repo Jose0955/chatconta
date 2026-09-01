@@ -6,6 +6,7 @@ import io
 import os
 import re
 import json
+import time
 import random
 import streamlit.components.v1 as components
 from openpyxl.styles import Font
@@ -279,7 +280,7 @@ st.title("🤝 Contín, tu asistente contable de confianza")
 # MASCOTA: Contín, el alien-pulpo contable 🐙
 # Cambia de cara según el momento: pensando, hablando o feliz.
 # ---------------------------------------------------------
-def mascota_svg(estado: str = "normal") -> str:
+def mascota_svg(estado: str = "normal", modo_hero: bool = False) -> str:
     if estado == "pensando":
         ojos = """
             <circle cx="78" cy="95" r="13" fill="white"/>
@@ -398,6 +399,7 @@ def mascota_svg(estado: str = "normal") -> str:
         """
 
     clase_extra = " mascota-bailando" if estado == "bailando" else ""
+    clase_extra += " mascota-hero" if modo_hero else ""
 
     svg_html = f"""
     <div class="mascota-flotante{clase_extra}">
@@ -475,6 +477,24 @@ def lanzar_confeti():
     # Respaldo garantizado: el efecto nativo de celebración de Streamlit,
     # que SIEMPRE funciona (no depende de scripts externos ni de CDNs).
     st.balloons()
+
+
+def escribir_con_efecto_maquina(texto: str, placeholder=None):
+    """Muestra el texto poco a poco, como si Contín lo estuviera escribiendo
+    en vivo. Si el texto es muy largo, acelera para no hacer esperar de más."""
+    if placeholder is None:
+        placeholder = st.empty()
+
+    palabras = texto.split(" ")
+    # Textos largos (muchas palabras) se revelan más rápido para no ser pesados
+    velocidad = 0.028 if len(palabras) < 40 else (0.014 if len(palabras) < 120 else 0.006)
+
+    acumulado = ""
+    for palabra in palabras:
+        acumulado += palabra + " "
+        placeholder.markdown(acumulado + "▌")
+        time.sleep(velocidad)
+    placeholder.markdown(acumulado.strip())
 
 
 def calcular_van(tasa: float, flujos: list) -> float:
@@ -711,8 +731,9 @@ if "mascota_estado" not in st.session_state:
 
 mascota_placeholder = st.empty()
 _estado_inicial = "bailando" if st.session_state.get("bailando", False) else st.session_state.mascota_estado
+_es_primera_visita = len(st.session_state.get("messages", [])) == 0
 with mascota_placeholder.container():
-    st.markdown(mascota_svg(_estado_inicial), unsafe_allow_html=True)
+    st.markdown(mascota_svg(_estado_inicial, modo_hero=_es_primera_visita), unsafe_allow_html=True)
 
 st.markdown(
     f"""
@@ -774,6 +795,82 @@ st.markdown(
             width: 78px;
             height: 86px;
         }}
+    }}
+
+    /* ---------- 🎬 Modo "hero": bienvenida grande la primera vez ---------- */
+    .mascota-hero {{
+        position: static !important;
+        display: flex !important;
+        justify-content: center !important;
+        margin: 0.5rem auto 1rem auto !important;
+        animation: aura-pulso 3.2s ease-in-out infinite, aparecer-hero 0.6s ease-out;
+    }}
+    .mascota-hero svg {{
+        width: 230px !important;
+        height: 250px !important;
+    }}
+    @keyframes aparecer-hero {{
+        from {{ opacity: 0; transform: scale(0.85); }}
+        to   {{ opacity: 1; transform: scale(1); }}
+    }}
+
+    /* ---------- ✨ Título con degradado ---------- */
+    h1 {{
+        background: linear-gradient(90deg, {AZUL_ACENTO}, #C7DBFF, {AZUL_SUAVE});
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        color: transparent !important;
+    }}
+
+    /* ---------- ✨ Aura pulsante constante alrededor de Contín ---------- */
+    .mascota-flotante {{
+        animation: aura-pulso 3.2s ease-in-out infinite;
+    }}
+    @keyframes aura-pulso {{
+        0%, 100% {{ filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5)) drop-shadow(0 0 8px {AZUL_ACENTO}55); }}
+        50%      {{ filter: drop-shadow(0 4px 14px rgba(0,0,0,0.6)) drop-shadow(0 0 22px {AZUL_ACENTO}AA); }}
+    }}
+
+    /* ---------- ✨ Burbujas de chat con aparición suave (fade-in) ---------- */
+    [data-testid="stChatMessage"] {{
+        animation: aparecer 0.35s ease-out;
+    }}
+    @keyframes aparecer {{
+        from {{ opacity: 0; transform: translateY(8px); }}
+        to   {{ opacity: 1; transform: translateY(0); }}
+    }}
+
+    /* ---------- 🪞 Vidrio esmerilado (glassmorphism) ---------- */
+    [data-testid="stChatMessage"],
+    [data-testid="stExpander"],
+    [data-testid="stPopoverBody"],
+    section[data-testid="stSidebar"] > div {{
+        background-color: {FONDO_TARJETA}CC !important;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid #FFFFFF14 !important;
+    }}
+    [data-testid="stChatMessage"]:nth-of-type(odd) {{
+        background-color: {FONDO_BURBUJA_USUARIO}CC !important;
+    }}
+    [data-testid="stChatMessage"]:nth-of-type(even) {{
+        background-color: {FONDO_BURBUJA_ASISTENTE}CC !important;
+    }}
+
+    /* ---------- 🎨 Scrollbar delgada y azul ---------- */
+    ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+    ::-webkit-scrollbar-track {{ background: {FONDO_APP}; }}
+    ::-webkit-scrollbar-thumb {{ background: {AZUL_SUAVE}; border-radius: 8px; }}
+    ::-webkit-scrollbar-thumb:hover {{ background: {AZUL_ACENTO}; }}
+
+    /* ---------- 🎨 Botones con elevación al pasar el mouse ---------- */
+    .stButton button, .stDownloadButton button {{
+        transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    }}
+    .stButton button:hover, .stDownloadButton button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px {AZUL_ACENTO}55 !important;
     }}
     </style>
     """,
@@ -1467,7 +1564,7 @@ def responder_pregunta(
 
                 st.session_state.historial_ia.append({"role": "assistant", "content": texto_respuesta})
 
-                st.markdown(texto_respuesta)
+                escribir_con_efecto_maquina(texto_respuesta)
                 st.session_state.messages.append(
                     {"role": "assistant", "content": texto_respuesta}
                 )
