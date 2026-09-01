@@ -477,6 +477,34 @@ def lanzar_confeti():
     st.balloons()
 
 
+def calcular_van(tasa: float, flujos: list) -> float:
+    """Calcula el Valor Actual Neto. 'flujos[0]' debe ser la inversión
+    inicial (negativa), y el resto los flujos de caja de cada periodo."""
+    return sum(flujo / (1 + tasa) ** i for i, flujo in enumerate(flujos))
+
+
+def calcular_tir(flujos: list):
+    """Calcula la Tasa Interna de Retorno por bisección (búsqueda binaria).
+    Devuelve None si no encuentra una tasa razonable entre -99% y 1000%."""
+    baja, alta = -0.99, 10.0
+    van_baja = calcular_van(baja, flujos)
+    van_alta = calcular_van(alta, flujos)
+    if van_baja * van_alta > 0:
+        return None
+    for _ in range(200):
+        medio = (baja + alta) / 2
+        van_medio = calcular_van(medio, flujos)
+        if abs(van_medio) < 0.01:
+            return medio
+        if van_baja * van_medio < 0:
+            alta = medio
+            van_alta = van_medio
+        else:
+            baja = medio
+            van_baja = van_medio
+    return (baja + alta) / 2
+
+
 def limpiar_para_voz(texto: str) -> str:
     """Prepara el texto de Contín para leerlo en voz alta: quita símbolos de
     Markdown (asteriscos, gatos, barras, etc.) y reemplaza las tablas por una
@@ -593,6 +621,17 @@ def boton_generar_quiz(texto_contexto: str, key_sufijo: str):
             st.rerun()
 
 
+def boton_explicar_mas_facil(key_sufijo: str):
+    """Botón que le pide a Contín que reexplique su última respuesta de
+    forma más sencilla, sin que el estudiante tenga que reescribir nada."""
+    if st.button("🔁 Explícamelo más fácil", key=f"facil_btn_{key_sufijo}"):
+        responder_pregunta(
+            "Por favor, explícame lo mismo de tu respuesta anterior pero de una "
+            "forma más fácil de entender: usa palabras más sencillas, ve más "
+            "despacio paso a paso, y si puedes, dame un ejemplo distinto al anterior."
+        )
+
+
 def mostrar_quiz():
     """Dibuja el quiz activo (si hay uno) como un formulario interactivo."""
     quiz = st.session_state.get("quiz_actual")
@@ -631,9 +670,36 @@ def mostrar_quiz():
                 st.error(f"**{i + 1}.** La respuesta correcta era: {texto_correcta}. {p.get('explicacion', '')}")
 
         st.markdown(f"## Resultado: {correctas}/{len(preguntas)}")
+
+        # ---- Racha y logros (viven solo en esta sesión del navegador) ----
+        if "racha_quiz" not in st.session_state:
+            st.session_state.racha_quiz = 0
+        if "total_quizzes_perfectos" not in st.session_state:
+            st.session_state.total_quizzes_perfectos = 0
+        if "logros_desbloqueados" not in st.session_state:
+            st.session_state.logros_desbloqueados = set()
+
         if correctas == len(preguntas):
             st.session_state.mascota_estado = "feliz"
+            st.session_state.racha_quiz += 1
+            st.session_state.total_quizzes_perfectos += 1
             lanzar_confeti()
+
+            nuevos_logros = []
+            hitos = {
+                1: "🥇 ¡Primer quiz perfecto!",
+                3: "🔥 3 quizzes perfectos seguidos",
+                5: "🌟 5 quizzes perfectos seguidos",
+                10: "🏆 10 quizzes perfectos seguidos",
+            }
+            for hito, texto_logro in hitos.items():
+                if st.session_state.racha_quiz == hito and texto_logro not in st.session_state.logros_desbloqueados:
+                    st.session_state.logros_desbloqueados.add(texto_logro)
+                    nuevos_logros.append(texto_logro)
+            for logro in nuevos_logros:
+                st.toast(logro, icon="🏆")
+        else:
+            st.session_state.racha_quiz = 0  # se rompe la racha si no fue perfecto
 
     if st.button("✖️ Cerrar quiz"):
         st.session_state.quiz_actual = None
@@ -746,6 +812,18 @@ MODEL_TRANSCRIPCION = "whisper-large-v3-turbo"
 with st.sidebar:
     st.header("⚙️ Opciones")
 
+    if "modo_proyeccion" not in st.session_state:
+        st.session_state.modo_proyeccion = False
+
+    modo_proyeccion_nuevo = st.toggle(
+        "🔍 Modo proyección (letra grande)",
+        value=st.session_state.modo_proyeccion,
+        help="Para cuando el profesor proyecta Contín frente a toda la clase.",
+    )
+    if modo_proyeccion_nuevo != st.session_state.modo_proyeccion:
+        st.session_state.modo_proyeccion = modo_proyeccion_nuevo
+        st.rerun()
+
     nivel = st.radio(
         "Selecciona tu nivel:",
         [
@@ -764,11 +842,116 @@ with st.sidebar:
     else:
         st.caption("📚 Sin material de docentes cargado todavía.")
 
+    st.markdown("---")
+    if st.session_state.get("racha_quiz", 0) > 0 or st.session_state.get("total_quizzes_perfectos", 0) > 0:
+        st.caption(
+            f"🔥 Racha actual: **{st.session_state.get('racha_quiz', 0)}** quiz(zes) perfecto(s) seguido(s)  \n"
+            f"🏆 Total de quizzes perfectos: **{st.session_state.get('total_quizzes_perfectos', 0)}**"
+        )
+        if st.session_state.get("logros_desbloqueados"):
+            with st.expander("🎖️ Logros desbloqueados"):
+                for logro in st.session_state.logros_desbloqueados:
+                    st.caption(logro)
+
+    st.markdown("---")
+    with st.expander("🧮 Calculadoras contables"):
+        tipo_calculadora = st.selectbox(
+            "Elige una calculadora",
+            ["Depreciación (línea recta)", "Interés simple", "Interés compuesto", "VAN y TIR"],
+        )
+
+        if tipo_calculadora == "Depreciación (línea recta)":
+            costo = st.number_input("Costo del activo ($)", min_value=0.0, value=1000.0, step=50.0)
+            residual = st.number_input("Valor residual ($)", min_value=0.0, value=100.0, step=10.0)
+            vida_util = st.number_input("Vida útil (años)", min_value=1, value=5, step=1)
+            if st.button("Calcular depreciación"):
+                depreciacion_anual = (costo - residual) / vida_util
+                st.success(f"Depreciación anual: ${depreciacion_anual:,.2f}")
+                filas = []
+                valor_libros = costo
+                for anio in range(1, int(vida_util) + 1):
+                    valor_libros = max(valor_libros - depreciacion_anual, residual)
+                    filas.append({
+                        "Año": anio,
+                        "Depreciación": f"${depreciacion_anual:,.2f}",
+                        "Valor en libros": f"${valor_libros:,.2f}",
+                    })
+                st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
+
+        elif tipo_calculadora == "Interés simple":
+            capital_is = st.number_input("Capital ($)", min_value=0.0, value=1000.0, key="is_capital")
+            tasa_is = st.number_input("Tasa de interés anual (%)", min_value=0.0, value=5.0, key="is_tasa")
+            tiempo_is = st.number_input("Tiempo (años)", min_value=0.0, value=1.0, step=0.5, key="is_tiempo")
+            if st.button("Calcular interés simple"):
+                interes = capital_is * (tasa_is / 100) * tiempo_is
+                monto_final = capital_is + interes
+                st.success(f"Interés generado: ${interes:,.2f}")
+                st.info(f"Monto final: ${monto_final:,.2f}")
+
+        elif tipo_calculadora == "Interés compuesto":
+            capital_ic = st.number_input("Capital ($)", min_value=0.0, value=1000.0, key="ic_capital")
+            tasa_ic = st.number_input("Tasa de interés anual (%)", min_value=0.0, value=5.0, key="ic_tasa")
+            tiempo_ic = st.number_input("Tiempo (años)", min_value=1, value=1, step=1, key="ic_tiempo")
+            capitalizacion = st.selectbox(
+                "Capitalización", ["Anual", "Semestral", "Trimestral", "Mensual"], key="ic_cap"
+            )
+            veces_por_anio = {"Anual": 1, "Semestral": 2, "Trimestral": 4, "Mensual": 12}[capitalizacion]
+            if st.button("Calcular interés compuesto"):
+                n = veces_por_anio
+                monto_final = capital_ic * (1 + (tasa_ic / 100) / n) ** (n * tiempo_ic)
+                interes = monto_final - capital_ic
+                st.success(f"Interés generado: ${interes:,.2f}")
+                st.info(f"Monto final: ${monto_final:,.2f}")
+
+        elif tipo_calculadora == "VAN y TIR":
+            inversion = st.number_input("Inversión inicial ($)", min_value=0.0, value=1000.0, key="van_inv")
+            tasa_desc = st.number_input("Tasa de descuento (%)", min_value=0.0, value=10.0, key="van_tasa")
+            num_periodos = st.number_input("Años de flujos de caja", min_value=1, max_value=10, value=3, key="van_periodos")
+            flujos_ingresados = []
+            for i in range(int(num_periodos)):
+                flujos_ingresados.append(
+                    st.number_input(f"Flujo de caja año {i + 1} ($)", value=500.0, key=f"van_flujo_{i}")
+                )
+            if st.button("Calcular VAN y TIR"):
+                flujos = [-inversion] + flujos_ingresados
+                van = calcular_van(tasa_desc / 100, flujos)
+                tir = calcular_tir(flujos)
+                st.success(f"VAN: ${van:,.2f}")
+                if van > 0:
+                    st.caption("✅ VAN positivo: el proyecto generaría valor a esa tasa de descuento.")
+                elif van < 0:
+                    st.caption("⚠️ VAN negativo: el proyecto no cubriría la rentabilidad esperada.")
+                if tir is not None:
+                    st.info(f"TIR: {tir * 100:,.2f}%")
+                else:
+                    st.warning("No se pudo calcular la TIR con estos flujos (revisa los valores).")
+
 # Inicialización de estados que ahora se controlan desde el "➕" junto al chat
 if "bailando" not in st.session_state:
     st.session_state.bailando = False
 if "modo_voz" not in st.session_state:
     st.session_state.modo_voz = False
+
+# ---------------------------------------------------------
+# MODO PROYECCIÓN: letra más grande y algunos elementos más
+# visibles, pensado para cuando se proyecta Contín en el pizarrón.
+# ---------------------------------------------------------
+if st.session_state.modo_proyeccion:
+    st.markdown(
+        """
+        <style>
+        .stApp, .stApp p, .stApp li, .stApp label, [data-testid="stMarkdownContainer"] p {
+            font-size: 1.35em !important;
+            line-height: 1.5 !important;
+        }
+        h1 { font-size: 2.4em !important; }
+        h2, h3 { font-size: 1.8em !important; }
+        [data-testid="stChatInput"] textarea { font-size: 1.3em !important; }
+        .stButton button, .stDownloadButton button { font-size: 1.15em !important; padding: 0.6em 1em !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # =========================================================
 # 3. PROMPT DEL SISTEMA (se adapta según el nivel elegido)
@@ -1016,6 +1199,22 @@ del estudiante). Trátalo igual que cualquier ejercicio contable:
 4. Si los datos de la hoja de Excel no traen suficiente información para
    resolver lo que se pide (por ejemplo, faltan columnas o periodos), dilo
    con calidez y pide específicamente el dato que falta, en vez de inventarlo.
+
+MODO "REVISA MI TAREA" (cuando el estudiante YA intentó resolver el ejercicio):
+Si la instrucción del estudiante indica que ya intentó resolverlo y quiere
+que lo corrijas — frases como "revisa mi tarea", "corrígeme", "ya lo resolví,
+revísalo", "¿está bien esto?", "dime si me equivoqué" — NO resuelvas el
+ejercicio desde cero como si fuera nuevo. En su lugar:
+1. Compara lo que el estudiante ya escribió en su Excel contra lo que
+   contablemente es correcto.
+2. Dile explícitamente, cuenta por cuenta o fila por fila, qué está BIEN
+   (✅) y qué está MAL (❌).
+3. Para cada error, explica POR QUÉ está mal y cuál es el valor o registro
+   correcto — con la misma calidez y método socrático de siempre, no como
+   un regaño.
+4. Al final, si todo estaba bien, felicítalo con calidez genuina. Si hubo
+   errores, anímalo a intentar corregirlo él mismo antes de dárselo ya
+   resuelto, salvo que te pida directamente la respuesta correcta.
 
 MATERIAL DE CLASE SUBIDO POR LOS DOCENTES:
 Además de todo lo anterior, tienes acceso a material que los docentes del
@@ -1312,6 +1511,7 @@ def responder_pregunta(
                     )
 
                 boton_generar_quiz(texto_respuesta, key_sufijo=f"vivo_{len(st.session_state.messages)}")
+                boton_explicar_mas_facil(key_sufijo=f"vivo_{len(st.session_state.messages)}")
 
             except Exception as e:
                 st.session_state.mascota_estado = "normal"
@@ -1385,6 +1585,10 @@ for idx, message in enumerate(st.session_state.messages):
                     key=f"descarga_historial_{idx}",
                 )
             boton_generar_quiz(message["content"], key_sufijo=f"historial_{idx}")
+            if idx == len(st.session_state.messages) - 1:
+                # Solo en el ÚLTIMO mensaje, para que la nueva respuesta que
+                # genere este botón aparezca al final y no en medio del chat.
+                boton_explicar_mas_facil(key_sufijo=f"historial_{idx}")
 
 mostrar_quiz()
 
