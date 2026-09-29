@@ -8,6 +8,7 @@ import re
 import json
 import time
 import random
+import unicodedata
 import streamlit.components.v1 as components
 from openpyxl.styles import Font
 
@@ -121,6 +122,145 @@ def cargar_material_docentes():
 
 
 MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
+
+# ---------------------------------------------------------
+# FRASE DE RESPALDO: lo que dice Contín cuando NO tiene información
+# suficiente (en vez de un seco "no sé"). Cuando la dice, el panda guiña
+# el ojo y le sale un corazón de la boca.
+# ---------------------------------------------------------
+FRASE_SIN_CONOCIMIENTO = (
+    "En estos momentos no tengo el conocimiento suficiente para poder responder "
+    "a tu inquietud. Mi creador está trabajando duro para hacer de mí un asistente "
+    "contable mejor para ti 😉❤️"
+)
+MARCA_SIN_CONOCIMIENTO = "mi creador está trabajando duro"
+
+# ---------------------------------------------------------
+# VIDEOS DE YOUTUBE COMO FUENTE (para Excel, fórmulas y programas contables)
+# Los videos se listan en el archivo "fuentes_youtube.txt" (una línea por
+# video, con el formato:  URL | tema). Contín descarga la transcripción de
+# cada video (si YouTube lo permite) y, ante cada pregunta, usa SOLO los
+# trozos más parecidos a lo que se preguntó, citando el enlace.
+# OJO: los videos sirven para "cómo se hace en Excel/programa", NO para
+# porcentajes ni leyes tributarias (eso viene solo de fuentes oficiales).
+# ---------------------------------------------------------
+ARCHIVO_VIDEOS = "fuentes_youtube.txt"
+LARGO_TROZO_VIDEO = 1500
+MAX_VIDEOS_POR_PREGUNTA = 2
+
+_PALABRAS_VACIAS = {
+    "que", "como", "para", "por", "con", "los", "las", "una", "uno", "unos",
+    "unas", "del", "the", "and", "cual", "cuales", "donde", "cuando", "esto",
+    "esta", "este", "eso", "esa", "ese", "mas", "muy", "pero", "sus", "mis",
+    "hacer", "puedo", "quiero", "necesito", "ayuda", "favor", "hola", "dime",
+    "explicame", "explica", "sobre", "entre", "desde", "hasta", "porque",
+}
+
+
+def _normalizar(texto: str) -> str:
+    """Minúsculas y sin tildes, para comparar palabras sin que importe cómo se escriban."""
+    texto = unicodedata.normalize("NFD", texto.lower())
+    return "".join(c for c in texto if unicodedata.category(c) != "Mn")
+
+
+def _palabras_clave(texto: str) -> set:
+    return {
+        p for p in re.findall(r"[a-z0-9]+", _normalizar(texto))
+        if len(p) > 2 and p not in _PALABRAS_VACIAS
+    }
+
+
+def _id_de_video(url: str):
+    coincidencia = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([A-Za-z0-9_-]{11})", url)
+    return coincidencia.group(1) if coincidencia else None
+
+
+def _descargar_transcripcion(video_id: str):
+    """Intenta bajar los subtítulos del video. Devuelve None si YouTube no
+    los entrega (a veces bloquea a los servidores en la nube) o si el video
+    no tiene subtítulos. Funciona con la versión nueva y la vieja de la librería."""
+    idiomas = ["es", "es-419", "es-ES", "en"]
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+    except Exception:
+        return None
+    try:
+        api = YouTubeTranscriptApi()
+        if hasattr(api, "fetch"):
+            fragmentos = api.fetch(video_id, languages=idiomas)
+            textos = [f.text if hasattr(f, "text") else f["text"] for f in fragmentos]
+        else:
+            fragmentos = YouTubeTranscriptApi.get_transcript(video_id, languages=idiomas)
+            textos = [f["text"] for f in fragmentos]
+        return " ".join(textos)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def cargar_videos_youtube():
+    """Lee fuentes_youtube.txt y baja la transcripción de cada video.
+    Se guarda en caché 24 horas para no repetir la descarga en cada pregunta."""
+    if not os.path.isfile(ARCHIVO_VIDEOS):
+        return []
+    videos = []
+    with open(ARCHIVO_VIDEOS, "r", encoding="utf-8", errors="ignore") as f:
+        lineas = f.read().splitlines()
+    for linea in lineas:
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        url, _, tema = linea.partition("|")
+        url, tema = url.strip(), tema.strip() or "Video de YouTube"
+        video_id = _id_de_video(url)
+        if not video_id:
+            continue
+        transcripcion = _descargar_transcripcion(video_id) or ""
+        videos.append({
+            "url": url,
+            "tema": tema,
+            "transcripcion": re.sub(r"\s+", " ", transcripcion).strip(),
+        })
+    return videos
+
+
+def buscar_videos_relevantes(pregunta: str):
+    """Elige los videos (máx. MAX_VIDEOS_POR_PREGUNTA) y el trozo de cada uno
+    que más se parece a la pregunta. Devuelve (texto_para_la_IA, [(tema, url)])."""
+    videos = cargar_videos_youtube()
+    if not videos:
+        return "", []
+    claves = _palabras_clave(pregunta)
+    if not claves:
+        return "", []
+
+    candidatos = []
+    for v in videos:
+        puntaje_tema = len(claves & _palabras_clave(v["tema"])) * 3
+        mejor_trozo, mejor_puntaje = "", 0
+        texto = v["transcripcion"]
+        for i in range(0, len(texto), LARGO_TROZO_VIDEO):
+            trozo = texto[i:i + LARGO_TROZO_VIDEO]
+            puntaje = len(claves & _palabras_clave(trozo))
+            if puntaje > mejor_puntaje:
+                mejor_puntaje, mejor_trozo = puntaje, trozo
+        total = puntaje_tema + mejor_puntaje
+        if total >= 2:
+            candidatos.append((total, v, mejor_trozo))
+
+    candidatos.sort(key=lambda c: c[0], reverse=True)
+    elegidos = candidatos[:MAX_VIDEOS_POR_PREGUNTA]
+    if not elegidos:
+        return "", []
+
+    partes = [
+        "VIDEOS DE YOUTUBE DE REFERENCIA (apoyo para explicar CÓMO se hace algo en "
+        "Excel o en un programa contable; no los uses para porcentajes ni leyes):"
+    ]
+    for _, v, trozo in elegidos:
+        contenido = trozo or "(sin transcripción disponible: solo puedes recomendar el enlace)"
+        partes.append(f"--- Video: {v['tema']} ({v['url']}) ---\n{contenido}")
+    return "\n".join(partes), [(v["tema"], v["url"]) for _, v, _ in elegidos]
 
 # =========================================================
 # CONFIGURACIÓN GENERAL DE LA PÁGINA
@@ -356,6 +496,23 @@ def mascota_svg(estado: str = "normal", modo_hero: bool = False) -> str:
                 <path d="M172 30 L175 38 L183 40 L175 43 L172 51 L169 43 L161 40 L169 38 Z" fill="white" opacity="0.9"/>
                 <circle cx="22" cy="55" r="3.5" fill="white" opacity="0.7"/>
             </g>
+        """
+    elif estado == "guinando":
+        # Un ojo abierto, el otro guiñando 😉, boquita de "besito" y
+        # corazones rojos que salen de la boca hacia arriba.
+        ojos = """
+            <g class="parpadeo">
+                <circle cx="79" cy="87" r="7" fill="white"/>
+                <circle cx="80" cy="88" r="4.4" fill="#111"/>
+                <circle cx="81.6" cy="86.2" r="1.7" fill="white"/>
+            </g>
+            <path d="M112 90 Q121 79 130 90" stroke="white" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+        """
+        boca = f'<ellipse cx="100" cy="116" rx="4" ry="4.8" fill="#2A1216" stroke="{NEGRO}" stroke-width="1.5"/>'
+        extra = """
+            <g class="corazon-boca c1"><path transform="translate(100 112)" d="M0 8 C-14 -2 -9 -14 0 -7 C9 -14 14 -2 0 8 Z" fill="#E53935"/></g>
+            <g class="corazon-boca c2"><path transform="translate(104 112) scale(0.7)" d="M0 8 C-14 -2 -9 -14 0 -7 C9 -14 14 -2 0 8 Z" fill="#FF5252"/></g>
+            <g class="corazon-boca c3"><path transform="translate(96 112) scale(0.55)" d="M0 8 C-14 -2 -9 -14 0 -7 C9 -14 14 -2 0 8 Z" fill="#E53935"/></g>
         """
     elif estado == "feliz":
         ojos = OJOS_FELICES
@@ -779,6 +936,22 @@ st.markdown(
         50%      {{ transform: translateY(-4px); }}
     }}
 
+    /* ---------- Corazoncitos rojos que salen de la boca 😉❤️ ---------- */
+    .corazon-boca {{
+        opacity: 0;
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: soplar-corazon 2.4s ease-out infinite;
+    }}
+    .corazon-boca.c1 {{ --dx: 0px;  animation-delay: 0s; }}
+    .corazon-boca.c2 {{ --dx: 16px; animation-delay: 0.8s; }}
+    .corazon-boca.c3 {{ --dx: -16px; animation-delay: 1.6s; }}
+    @keyframes soplar-corazon {{
+        0%   {{ opacity: 0; transform: translate(0, 0) scale(0.4); }}
+        15%  {{ opacity: 1; }}
+        100% {{ opacity: 0; transform: translate(var(--dx, 0px), -70px) scale(1.15); }}
+    }}
+
     /* ---------- Contín bailando 🕺 ---------- */
     .mascota-bailando {{
         animation: bailar 0.8s ease-in-out infinite !important;
@@ -893,7 +1066,7 @@ st.markdown(
     }}
 
     @media (prefers-reduced-motion: reduce) {{
-        .bambu, .parpadeo, .corazones, .notas-musicales, .chispas,
+        .bambu, .parpadeo, .corazones, .notas-musicales, .chispas, .corazon-boca,
         .mascota-flotante, [data-testid="stChatMessage"] {{ animation: none !important; }}
     }}
     </style>
@@ -967,6 +1140,14 @@ with st.sidebar:
                 st.caption(f"• {nombre}")
     else:
         st.caption("📚 Sin material de docentes cargado todavía.")
+
+    _videos_cargados = cargar_videos_youtube()
+    if _videos_cargados:
+        _con_texto = sum(1 for v in _videos_cargados if v["transcripcion"])
+        with st.expander(f"🎥 Videos de referencia ({len(_videos_cargados)})"):
+            st.caption(f"Con transcripción disponible: {_con_texto} de {len(_videos_cargados)}")
+            for v in _videos_cargados:
+                st.caption(f"• [{v['tema']}]({v['url']})")
 
     st.markdown("---")
     if st.session_state.get("racha_quiz", 0) > 0 or st.session_state.get("total_quizzes_perfectos", 0) > 0:
@@ -1352,6 +1533,26 @@ ejercicio desde cero como si fuera nuevo. En su lugar:
    errores, anímalo a intentar corregirlo él mismo antes de dárselo ya
    resuelto, salvo que te pida directamente la respuesta correcta.
 
+CUANDO NO TENGAS INFORMACIÓN SUFICIENTE:
+Nunca respondas un seco "no sé". Si de verdad no tienes información confiable
+para responder (un dato tributario que no está en tu tabla, una ley reciente, un
+programa contable que no conoces), responde EXACTAMENTE con esta frase:
+{FRASE_SIN_CONOCIMIENTO}
+Usa la frase SOLO cuando realmente no puedas responder con seguridad. Si conoces
+una parte de la respuesta, da esa parte primero y usa la frase para lo que falte.
+Nunca inventes datos, porcentajes ni pasos para evitar usar la frase.
+
+VIDEOS DE YOUTUBE COMO REFERENCIA:
+A veces, junto a la pregunta del estudiante, recibirás fragmentos de videos de
+YouTube (con su enlace) sobre Excel, fórmulas o programas contables. Úsalos como
+apoyo para explicar CÓMO se hace algo paso a paso, y menciona el enlace del video
+al final. Reglas: (1) un video NO es fuente para porcentajes, leyes ni normas
+tributarias: eso solo sale de tu tabla de retenciones o de fuentes oficiales;
+(2) si el video contradice a la tabla o al material del docente, gana la tabla o
+el docente; (3) solo tienes el texto del video, no lo "viste": no describas
+imágenes ni pantallas del video; (4) si no recibiste videos, explica con tu
+conocimiento general de Excel sin inventar enlaces.
+
 MATERIAL DE CLASE SUBIDO POR LOS DOCENTES:
 Además de todo lo anterior, tienes acceso a material que los docentes del
 colegio subieron (apuntes, diapositivas, ejemplos, hojas de cálculo). Úsalo
@@ -1549,7 +1750,10 @@ def generar_excel_con_original(tablas, bytes_originales: bytes):
 # Patrones con límites de palabra (\b) para que "canta" NO se active con
 # "cantante", ni "gracias" con "gracioso".
 PATRON_AGRADECIMIENTO = re.compile(
-    r"\b(gracias|muchas gracias|ya entend[ií]|me qued[oó] claro|qued[oó] clar[ií]simo)\b",
+    r"\bgracias\b"
+    r"|(?<!no )(?<!nada )\b(?:ya |ahora |sí |si )?(?:entend[ií]|entendido|comprend[ií])\b"
+    r"|\bme qued[oó] claro\b|\bqued[oó] clar[ií]simo\b"
+    r"|\bya lo (?:entend[ií]|comprend[ií]|pill[eé])\b",
     re.IGNORECASE,
 )
 PATRON_CANTAR = re.compile(
@@ -1598,9 +1802,18 @@ def responder_pregunta(
                 # Agregamos el mensaje del estudiante al historial de la IA
                 st.session_state.historial_ia.append({"role": "user", "content": mensaje_para_ia})
 
+                # Buscamos videos de YouTube relacionados con la pregunta.
+                # Su texto se manda SOLO en esta llamada (no se guarda en el
+                # historial) para no gastar tokens en preguntas siguientes.
+                contexto_videos, fuentes_videos = buscar_videos_relevantes(texto_mostrado)
+
                 # Solo mandamos los últimos mensajes (no todo el historial)
                 # para no gastar tokens de más ni chocar con el límite gratuito.
                 historial_reciente = st.session_state.historial_ia[-MAX_MENSAJES_HISTORIAL:]
+                if contexto_videos:
+                    historial_reciente = historial_reciente[:-1] + [
+                        {"role": "user", "content": f"{contexto_videos}\n\n{mensaje_para_ia}"}
+                    ]
                 mensajes_para_groq = (
                     [{"role": "system", "content": SYSTEM_PROMPT}]
                     + historial_reciente
@@ -1614,16 +1827,24 @@ def responder_pregunta(
 
                 st.session_state.historial_ia.append({"role": "assistant", "content": texto_respuesta})
 
-                escribir_con_efecto_maquina(texto_respuesta)
+                # Si se usaron videos de YouTube, dejamos los enlaces a la vista
+                texto_final = texto_respuesta
+                if fuentes_videos:
+                    enlaces = "  \n".join(f"🎥 [{tema}]({url})" for tema, url in fuentes_videos)
+                    texto_final = f"{texto_respuesta}\n\n**Videos de referencia:**  \n{enlaces}"
+
+                escribir_con_efecto_maquina(texto_final)
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": texto_respuesta}
+                    {"role": "assistant", "content": texto_final}
                 )
 
                 # 2) Cara según cómo terminó: cantando > feliz (agradecimiento) > hablando
                 if es_canto:
                     nuevo_estado = "cantando"
-                elif es_agradecimiento:
-                    nuevo_estado = "feliz"
+                elif es_agradecimiento or MARCA_SIN_CONOCIMIENTO in texto_respuesta.lower():
+                    # Guiño + corazoncito rojo: cuando le dan las gracias, dicen
+                    # que ya entendieron, o cuando Contín usa su frase de respaldo.
+                    nuevo_estado = "guinando"
                 else:
                     nuevo_estado = "hablando"
                 st.session_state.mascota_estado = nuevo_estado
