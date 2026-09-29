@@ -6,3 +6,4 @@ xlrd
 tabulate
 pypdf
 python-pptx
+youtube-transcript-api
