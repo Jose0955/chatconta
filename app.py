@@ -1,6 +1,6 @@
 import streamlit as st
 from groq import Groq
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import io
 import os
@@ -24,6 +24,16 @@ def hojas_excel_a_markdown(hojas: dict) -> str:
     return "\n".join(partes)
 
 
+def mostrar_tabla(df: pd.DataFrame):
+    """Muestra un DataFrame a todo el ancho. Funciona tanto en versiones
+    nuevas de Streamlit (width='stretch') como en las anteriores
+    (use_container_width), para que no falle al actualizar."""
+    try:
+        st.dataframe(df, hide_index=True, width="stretch")
+    except TypeError:
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+
 # ---------------------------------------------------------
 # MATERIAL DE CLASE SUBIDO POR LOS DOCENTES
 # Los docentes NO suben archivos desde la app (eso requeriría una base de
@@ -34,19 +44,20 @@ def hojas_excel_a_markdown(hojas: dict) -> str:
 # tanto la barra lateral como el prompt del sistema lo necesitan.
 # ---------------------------------------------------------
 CARPETA_MATERIAL_DOCENTES = "material_docentes"
-LARGO_MAXIMO_MATERIAL = 6000  # límite de caracteres para no disparar el consumo de tokens
+LARGO_MAXIMO_MATERIAL = 6000  # límite total de caracteres para no disparar el consumo de tokens
 
 
 @st.cache_data(show_spinner=False)
 def cargar_material_docentes():
     """Lee todos los archivos de la carpeta material_docentes/ y arma un
     texto resumido para dárselo a Contín como referencia extra. Si un
-    archivo falla al leerse, simplemente se lo salta (no rompe la app)."""
+    archivo falla al leerse, simplemente se lo salta (no rompe la app).
+    El espacio disponible se REPARTE en partes iguales entre los archivos,
+    así ninguno se queda sin aparecer."""
     if not os.path.isdir(CARPETA_MATERIAL_DOCENTES):
         return "", []
 
-    partes = []
-    archivos_cargados = []
+    textos = []  # lista de (nombre_archivo, texto)
 
     for nombre_archivo in sorted(os.listdir(CARPETA_MATERIAL_DOCENTES)):
         if nombre_archivo.startswith(".") or nombre_archivo.upper().startswith("README"):
@@ -86,19 +97,27 @@ def cargar_material_docentes():
                 texto_archivo = "\n".join(lineas)
 
             if texto_archivo and texto_archivo.strip():
-                partes.append(f"--- Material del docente: {nombre_archivo} ---\n{texto_archivo.strip()}")
-                archivos_cargados.append(nombre_archivo)
+                textos.append((nombre_archivo, texto_archivo.strip()))
 
         except Exception:
             # Si un archivo específico falla (formato raro, corrupto, etc.),
             # lo saltamos sin tumbar el resto de la app.
             continue
 
-    texto_completo = "\n\n".join(partes)
-    if len(texto_completo) > LARGO_MAXIMO_MATERIAL:
-        texto_completo = texto_completo[:LARGO_MAXIMO_MATERIAL] + "\n[...material recortado por espacio...]"
+    if not textos:
+        return "", []
 
-    return texto_completo, archivos_cargados
+    # Reparto equitativo del espacio: cada archivo tiene su propio tope.
+    tope_por_archivo = max(800, LARGO_MAXIMO_MATERIAL // len(textos))
+    partes = []
+    archivos_cargados = []
+    for nombre_archivo, texto in textos:
+        if len(texto) > tope_por_archivo:
+            texto = texto[:tope_por_archivo] + "\n[...recortado por espacio...]"
+        partes.append(f"--- Material del docente: {nombre_archivo} ---\n{texto}")
+        archivos_cargados.append(nombre_archivo)
+
+    return "\n\n".join(partes), archivos_cargados
 
 
 MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
@@ -108,31 +127,31 @@ MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
 # =========================================================
 st.set_page_config(
     page_title="Contín - Tu Tutor de Contabilidad",
-    page_icon="🤝",
+    page_icon="🐼",
     layout="centered"
 )
 
 # ---------------------------------------------------------
-# ESTILOS PERSONALIZADOS — modo oscuro fijo, estilo "Gmail oscuro"
-# (fondo casi negro + acentos azules), con estrellitas animadas.
+# ESTILOS PERSONALIZADOS — modo oscuro fijo: negro con verdes
+# suaves de bosque/bambú y chispitas verdes animadas.
 # Al ser un tema FIJO (no depende del modo claro/oscuro del celular
 # o la laptop), el contraste de texto siempre queda correcto.
 # ---------------------------------------------------------
-AZUL_ACENTO = "#8AB4F8"     # azul estilo Google/Gmail modo oscuro
-AZUL_SUAVE = "#5B9BF0"
-FONDO_APP = "#050709"        # negro más duro y sólido
-FONDO_TARJETA = "#12161C"
-FONDO_BURBUJA_USUARIO = "#1B2026"
-FONDO_BURBUJA_ASISTENTE = "#0F1B2A"
+ACENTO = "#7BE0A4"          # verde menta brillante (bambú fresco)
+ACENTO_SUAVE = "#3FB97A"    # verde hoja
+FONDO_APP = "#040806"       # negro con un toque verdoso
+FONDO_TARJETA = "#0E1611"
+FONDO_BURBUJA_USUARIO = "#141C17"
+FONDO_BURBUJA_ASISTENTE = "#0C1F15"
 TEXTO_CLARO = "#FFFFFF"
 
-# Generamos posiciones aleatorias (pero fijas por sesión) para las estrellitas
+# Generamos posiciones aleatorias (pero fijas por sesión) para las chispitas
 random.seed(7)
 _estrellas_html = ""
-for i in range(35):
+for i in range(40):
     top = random.uniform(0, 100)
     left = random.uniform(0, 100)
-    tamano = random.uniform(2, 4)
+    tamano = random.uniform(2, 4.5)
     duracion = random.uniform(4, 9)
     retraso = random.uniform(0, 6)
     _estrellas_html += (
@@ -144,9 +163,12 @@ for i in range(35):
 st.markdown(
     f"""
     <style>
-    /* ---------- Fondo general y estrellitas animadas ---------- */
+    /* ---------- Fondo general y chispitas verdes animadas ---------- */
     .stApp {{
-        background: {FONDO_APP} !important;
+        background:
+            radial-gradient(ellipse at 50% -10%, #0F2B1C 0%, transparent 55%),
+            radial-gradient(ellipse at 90% 100%, #0A1F14 0%, transparent 50%),
+            {FONDO_APP} !important;
     }}
     html, body {{
         background-color: {FONDO_APP} !important;
@@ -157,11 +179,14 @@ st.markdown(
     [data-testid="stBottomBlockContainer"],
     .stChatFloatingInputContainer,
     [data-testid="stAppViewContainer"] {{
+        background-color: transparent !important;
+    }}
+    [data-testid="stBottom"] > div {{
         background-color: {FONDO_APP} !important;
     }}
-    /* Barra decorativa roja de arriba -> la pasamos a azul para que combine */
+    /* Barra decorativa de arriba en verde para que combine */
     [data-testid="stDecoration"] {{
-        background-image: linear-gradient(90deg, {AZUL_SUAVE}, {AZUL_ACENTO}) !important;
+        background-image: linear-gradient(90deg, {ACENTO_SUAVE}, {ACENTO}) !important;
     }}
 
     .campo-estrellas {{
@@ -174,10 +199,10 @@ st.markdown(
     }}
     .estrella {{
         position: absolute;
-        background: {AZUL_ACENTO};
+        background: {ACENTO};
         border-radius: 50%;
         opacity: 0.25;
-        box-shadow: 0 0 6px 1px {AZUL_ACENTO};
+        box-shadow: 0 0 6px 1px {ACENTO};
         animation-name: flotar, titilar;
         animation-iteration-count: infinite;
         animation-timing-function: ease-in-out;
@@ -191,8 +216,11 @@ st.markdown(
         0%, 100% {{ opacity: 0.15; }}
         50%      {{ opacity: 0.7; }}
     }}
+    @media (prefers-reduced-motion: reduce) {{
+        .estrella {{ animation: none; }}
+    }}
 
-    /* Todo el contenido va por encima del campo de estrellas */
+    /* Todo el contenido va por encima del campo de chispitas */
     .main .block-container {{
         padding-top: 2rem;
         position: relative;
@@ -205,17 +233,17 @@ st.markdown(
         color: {TEXTO_CLARO} !important;
     }}
     h1 {{
-        color: {AZUL_ACENTO} !important;
+        color: {ACENTO} !important;
     }}
     h2, h3, h4 {{
-        color: {AZUL_SUAVE} !important;
+        color: {ACENTO_SUAVE} !important;
     }}
-    a {{ color: {AZUL_ACENTO} !important; }}
+    a {{ color: {ACENTO} !important; }}
 
     /* ---------- Barra lateral ---------- */
     section[data-testid="stSidebar"] {{
         background-color: {FONDO_TARJETA} !important;
-        border-right: 1px solid #23293380;
+        border-right: 1px solid #1F2E2680;
     }}
     section[data-testid="stSidebar"] * {{
         color: {TEXTO_CLARO} !important;
@@ -224,14 +252,14 @@ st.markdown(
     /* ---------- Burbujas de chat ---------- */
     [data-testid="stChatMessage"] {{
         border-radius: 16px;
-        border: 1px solid #23293380;
+        border: 1px solid #1F2E2680;
     }}
     [data-testid="stChatMessage"]:nth-of-type(odd) {{
         background-color: {FONDO_BURBUJA_USUARIO} !important;
     }}
     [data-testid="stChatMessage"]:nth-of-type(even) {{
         background-color: {FONDO_BURBUJA_ASISTENTE} !important;
-        border-left: 3px solid {AZUL_ACENTO};
+        border-left: 3px solid {ACENTO};
     }}
 
     /* ---------- Caja de texto del chat ---------- */
@@ -241,26 +269,26 @@ st.markdown(
     }}
     [data-testid="stChatInput"] {{
         background-color: {FONDO_TARJETA} !important;
-        border: 1px solid {AZUL_ACENTO}55 !important;
+        border: 1px solid {ACENTO}55 !important;
     }}
 
     /* ---------- Botones ---------- */
     .stButton button, .stDownloadButton button {{
         border-radius: 12px;
-        background-color: {AZUL_ACENTO} !important;
-        color: #0B0E14 !important;
+        background-color: {ACENTO} !important;
+        color: #06110B !important;
         border: none !important;
         font-weight: 600;
     }}
     .stButton button:hover, .stDownloadButton button:hover {{
-        background-color: {AZUL_SUAVE} !important;
+        background-color: {ACENTO_SUAVE} !important;
     }}
 
     /* ---------- Expanders (paneles de voz y Excel) ---------- */
     [data-testid="stExpander"] {{
         background-color: {FONDO_TARJETA} !important;
         border-radius: 12px;
-        border: 1px solid #23293380;
+        border: 1px solid #1F2E2680;
     }}
 
     /* ---------- Radios (nivel) ---------- */
@@ -274,129 +302,98 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🤝 Contín, tu asistente contable de confianza")
+st.title("🐼 Contín, tu asistente contable de confianza")
 
 # ---------------------------------------------------------
-# MASCOTA: Contín, el alien-pulpo contable 🐙
-# Cambia de cara según el momento: pensando, hablando o feliz.
+# MASCOTA: Contín, el osito panda contable 🐼🎋
+# Cambia de cara según el momento: pensando, hablando, feliz,
+# bailando o cantando. Siempre lleva su hojita de bambú.
 # ---------------------------------------------------------
 def mascota_svg(estado: str = "normal", modo_hero: bool = False) -> str:
-    if estado == "pensando":
-        ojos = """
-            <circle cx="78" cy="95" r="13" fill="white"/>
-            <circle cx="122" cy="95" r="13" fill="white"/>
-            <circle cx="83" cy="90" r="6" fill="#0B3D91"/>
-            <circle cx="127" cy="90" r="6" fill="#0B3D91"/>
+    NEGRO = "#1C1C1C"
+
+    def ojos_abiertos(dx=0, dy=0):
+        """Ojitos redondos y brillantes sobre los parches negros.
+        dx/dy mueven las pupilas (para mirar hacia arriba, etc.)."""
+        return f"""
+            <g class="parpadeo">
+                <circle cx="79" cy="87" r="7" fill="white"/>
+                <circle cx="{80 + dx}" cy="{88 + dy}" r="4.4" fill="#111"/>
+                <circle cx="{81.6 + dx}" cy="{86.2 + dy}" r="1.7" fill="white"/>
+            </g>
+            <g class="parpadeo">
+                <circle cx="121" cy="87" r="7" fill="white"/>
+                <circle cx="{120 + dx}" cy="{88 + dy}" r="4.4" fill="#111"/>
+                <circle cx="{121.6 + dx}" cy="{86.2 + dy}" r="1.7" fill="white"/>
+            </g>
         """
-        boca = '<ellipse cx="100" cy="128" rx="7" ry="6" fill="#0B3D91"/>'
+
+    OJOS_FELICES = """
+        <path d="M70 90 Q79 79 88 90" stroke="white" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+        <path d="M112 90 Q121 79 130 90" stroke="white" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+    """
+    BOCA_SONRISA_ABIERTA = f"""
+        <path d="M91 111 Q100 128 109 111 Z" fill="#2A1216" stroke="{NEGRO}" stroke-width="2" stroke-linejoin="round"/>
+        <ellipse cx="100" cy="120" rx="4.5" ry="3" fill="#FF8FA3"/>
+    """
+
+    if estado == "pensando":
+        ojos = ojos_abiertos(dx=3, dy=-4)
+        boca = f'<ellipse cx="100" cy="114" rx="3.5" ry="3.5" fill="{NEGRO}"/>'
         extra = """
             <g class="burbuja-pensar">
-                <circle cx="150" cy="55" r="5" fill="white" opacity="0.85"/>
-                <circle cx="163" cy="42" r="7" fill="white" opacity="0.85"/>
-                <ellipse cx="182" cy="24" rx="16" ry="12" fill="white" opacity="0.9"/>
-                <text x="182" y="29" font-size="14" text-anchor="middle" fill="#5B9BF0">?</text>
+                <circle cx="150" cy="70" r="4" fill="white" opacity="0.85"/>
+                <circle cx="162" cy="58" r="6" fill="white" opacity="0.85"/>
+                <ellipse cx="180" cy="38" rx="16" ry="12" fill="white" opacity="0.92"/>
+                <text x="180" y="43" font-size="14" text-anchor="middle" fill="#3FB97A">?</text>
             </g>
         """
     elif estado == "hablando":
-        ojos = """
-            <circle cx="78" cy="95" r="14" fill="white"/>
-            <circle cx="122" cy="95" r="14" fill="white"/>
-            <circle cx="80" cy="95" r="7" fill="#0B3D91"/>
-            <circle cx="124" cy="95" r="7" fill="#0B3D91"/>
-        """
-        boca = '<ellipse cx="100" cy="130" rx="14" ry="11" fill="#0B3D91"/>'
+        ojos = ojos_abiertos()
+        boca = f'<path d="M92 111 Q100 124 108 111 Z" fill="#2A1216" stroke="{NEGRO}" stroke-width="2" stroke-linejoin="round"/><ellipse cx="100" cy="118" rx="3.5" ry="2.4" fill="#FF8FA3"/>'
         extra = """
             <g class="chispas">
-                <path d="M158 60 L162 70 L172 72 L162 76 L158 86 L154 76 L144 72 L154 70 Z" fill="white" opacity="0.9"/>
-                <circle cx="35" cy="65" r="4" fill="white" opacity="0.7"/>
+                <path d="M172 30 L175 38 L183 40 L175 43 L172 51 L169 43 L161 40 L169 38 Z" fill="white" opacity="0.9"/>
+                <circle cx="22" cy="55" r="3.5" fill="white" opacity="0.7"/>
             </g>
         """
     elif estado == "feliz":
-        ojos = """
-            <path d="M68 95 Q78 82 88 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
-            <path d="M112 95 Q122 82 132 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
-        """
-        boca = '<path d="M78 122 Q100 148 122 122" stroke="#0B3D91" stroke-width="7" fill="none" stroke-linecap="round"/>'
+        ojos = OJOS_FELICES
+        boca = BOCA_SONRISA_ABIERTA
         extra = """
             <g class="corazones">
-                <text x="35" y="55" font-size="22">💙</text>
-                <text x="160" y="45" font-size="18">✨</text>
-                <text x="150" y="90" font-size="16">💙</text>
+                <text x="14" y="58" font-size="20">💚</text>
+                <text x="168" y="34" font-size="16">✨</text>
+                <text x="10" y="112" font-size="14">💚</text>
             </g>
         """
     elif estado == "bailando":
-        ojos = """
-            <path d="M68 95 Q78 82 88 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
-            <path d="M112 95 Q122 82 132 95" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
-        """
-        boca = '<path d="M78 122 Q100 148 122 122" stroke="#0B3D91" stroke-width="7" fill="none" stroke-linecap="round"/>'
+        ojos = OJOS_FELICES
+        boca = BOCA_SONRISA_ABIERTA
         extra = """
             <g class="notas-musicales">
-                <text x="30" y="50" font-size="22">🎵</text>
-                <text x="158" y="40" font-size="20">🎶</text>
+                <text x="10" y="52" font-size="20">🎵</text>
+                <text x="168" y="30" font-size="18">🎶</text>
             </g>
         """
     elif estado == "cantando":
-        ojos = """
-            <path d="M68 92 Q78 80 88 92" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
-            <path d="M112 92 Q122 80 132 92" stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
-        """
-        boca = '<ellipse cx="100" cy="132" rx="12" ry="14" fill="#0B3D91"/>'
+        ojos = OJOS_FELICES
+        boca = f'<ellipse cx="100" cy="118" rx="6" ry="8" fill="#2A1216" stroke="{NEGRO}" stroke-width="2"/><ellipse cx="100" cy="122" rx="3.5" ry="2.5" fill="#FF8FA3"/>'
         extra = """
             <g class="notas-musicales">
-                <text x="150" y="45" font-size="24">🎵</text>
-                <text x="28" y="60" font-size="18">🎶</text>
+                <text x="168" y="30" font-size="20">🎵</text>
+                <text x="10" y="50" font-size="16">🎶</text>
             </g>
             <g class="microfono">
-                <rect x="150" y="98" width="12" height="26" rx="6" fill="#EEE"/>
-                <line x1="156" y1="124" x2="156" y2="145" stroke="#5B9BF0" stroke-width="4"/>
-                <circle cx="156" cy="96" r="10" fill="#DDD"/>
+                <rect x="30" y="140" width="8" height="26" rx="4" fill="#EEE"/>
+                <circle cx="34" cy="136" r="9" fill="#CFCFCF"/>
+                <circle cx="34" cy="136" r="9" fill="none" stroke="#3FB97A" stroke-width="2"/>
             </g>
         """
     else:  # normal / idle
-        ojos = """
-            <circle cx="78" cy="95" r="13" fill="white" class="parpadeo"/>
-            <circle cx="122" cy="95" r="13" fill="white" class="parpadeo"/>
-            <circle cx="78" cy="95" r="6" fill="#0B3D91"/>
-            <circle cx="122" cy="95" r="6" fill="#0B3D91"/>
-        """
-        boca = '<path d="M85 125 Q100 135 115 125" stroke="#0B3D91" stroke-width="5" fill="none" stroke-linecap="round"/>'
+        ojos = ojos_abiertos()
+        boca = f'<path d="M92 111 Q96 117 100 111 Q104 117 108 111" stroke="{NEGRO}" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
         extra = ""
-
-    # ---------------------------------------------------------
-    # Accesorios: en modo "profesional" (explicando conta) usa
-    # lentes + calculadora. En modo "amigo" (consejos, baile,
-    # canto, celebración) se los quita y quedan tirados al lado.
-    # ---------------------------------------------------------
-    ESTADOS_PROFESIONALES = ("normal", "pensando", "hablando")
-    if estado in ESTADOS_PROFESIONALES:
-        accesorios = """
-            <g class="lentes">
-                <circle cx="78" cy="95" r="18" fill="#8AB4F8" fill-opacity="0.25" stroke="#0B3D91" stroke-width="3"/>
-                <circle cx="122" cy="95" r="18" fill="#8AB4F8" fill-opacity="0.25" stroke="#0B3D91" stroke-width="3"/>
-                <line x1="96" y1="95" x2="104" y2="95" stroke="#0B3D91" stroke-width="3"/>
-            </g>
-            <g class="calculadora">
-                <rect x="150" y="118" width="26" height="34" rx="4" fill="#E8EAED" stroke="#3E7BD9" stroke-width="2"/>
-                <rect x="154" y="122" width="18" height="7" rx="1" fill="#3E7BD9"/>
-                <circle cx="157" cy="135" r="2" fill="#3E7BD9"/>
-                <circle cx="163" cy="135" r="2" fill="#3E7BD9"/>
-                <circle cx="169" cy="135" r="2" fill="#3E7BD9"/>
-                <circle cx="157" cy="143" r="2" fill="#3E7BD9"/>
-                <circle cx="163" cy="143" r="2" fill="#3E7BD9"/>
-                <circle cx="169" cy="143" r="2" fill="#3E7BD9"/>
-            </g>
-        """
-    else:
-        # Modo amigo: lentes y calculadora tirados a un lado
-        accesorios = """
-            <g class="modo-amigo-doodle" opacity="0.8">
-                <circle cx="182" cy="168" r="7" fill="none" stroke="#5B9BF0" stroke-width="2"/>
-                <circle cx="196" cy="172" r="7" fill="none" stroke="#5B9BF0" stroke-width="2"/>
-                <line x1="189" y1="169" x2="189" y2="171" stroke="#5B9BF0" stroke-width="2"/>
-                <rect x="8" y="172" width="16" height="20" rx="3" fill="#E8EAED" stroke="#3E7BD9" stroke-width="2" transform="rotate(-18 16 182)"/>
-            </g>
-        """
 
     clase_extra = " mascota-bailando" if estado == "bailando" else ""
     clase_extra += " mascota-hero" if modo_hero else ""
@@ -405,25 +402,42 @@ def mascota_svg(estado: str = "normal", modo_hero: bool = False) -> str:
     <div class="mascota-flotante{clase_extra}">
     <svg viewBox="0 0 200 220" width="150" height="165" xmlns="http://www.w3.org/2000/svg">
         <defs>
-            <radialGradient id="cuerpoGrad" cx="40%" cy="35%" r="75%">
-                <stop offset="0%" stop-color="#EAF3FF"/>
-                <stop offset="45%" stop-color="#8AB4F8"/>
-                <stop offset="100%" stop-color="#3E7BD9"/>
+            <radialGradient id="pandaBlanco" cx="40%" cy="30%" r="80%">
+                <stop offset="0%" stop-color="#FFFFFF"/>
+                <stop offset="70%" stop-color="#F4F4F4"/>
+                <stop offset="100%" stop-color="#DADADA"/>
             </radialGradient>
         </defs>
-        <g class="tentaculo t1"><path d="M55 165 Q40 190 50 215" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
-        <g class="tentaculo t2"><path d="M80 175 Q75 200 82 218" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
-        <g class="tentaculo t3"><path d="M120 175 Q125 200 118 218" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
-        <g class="tentaculo t4"><path d="M145 165 Q160 190 150 215" stroke="#5B9BF0" stroke-width="14" fill="none" stroke-linecap="round"/></g>
-        <line x1="70" y1="45" x2="55" y2="15" stroke="#5B9BF0" stroke-width="5" stroke-linecap="round"/>
-        <circle cx="55" cy="12" r="7" fill="#EAF3FF" class="antena"/>
-        <line x1="130" y1="45" x2="145" y2="15" stroke="#5B9BF0" stroke-width="5" stroke-linecap="round"/>
-        <circle cx="145" cy="12" r="7" fill="#EAF3FF" class="antena"/>
-        <ellipse cx="100" cy="110" rx="80" ry="75" fill="url(#cuerpoGrad)"/>
+        <g class="bambu">
+            <rect x="157" y="98" width="8" height="112" rx="3.5" fill="#6FCF8A" stroke="#3FA060" stroke-width="1.5"/>
+            <line x1="157" y1="130" x2="165" y2="130" stroke="#3FA060" stroke-width="2"/>
+            <line x1="157" y1="170" x2="165" y2="170" stroke="#3FA060" stroke-width="2"/>
+            <path d="M161 104 Q178 80 197 84 Q184 106 161 104 Z" fill="#8EE59B" stroke="#3FA060" stroke-width="1.2"/>
+            <path d="M161 126 Q182 108 199 118 Q186 136 161 126 Z" fill="#7BD98C" stroke="#3FA060" stroke-width="1.2"/>
+            <path d="M161 98 Q150 78 158 62 Q171 80 161 98 Z" fill="#A6F0B0" stroke="#3FA060" stroke-width="1.2"/>
+        </g>
+        <circle cx="50" cy="38" r="19" fill="{NEGRO}"/>
+        <circle cx="50" cy="38" r="9" fill="#3A3A3A"/>
+        <circle cx="150" cy="38" r="19" fill="{NEGRO}"/>
+        <circle cx="150" cy="38" r="9" fill="#3A3A3A"/>
+        <ellipse cx="100" cy="172" rx="50" ry="40" fill="url(#pandaBlanco)"/>
+        <ellipse cx="70" cy="205" rx="20" ry="13" fill="{NEGRO}"/>
+        <ellipse cx="130" cy="205" rx="20" ry="13" fill="{NEGRO}"/>
+        <ellipse cx="70" cy="207" rx="8" ry="5" fill="#3A3A3A"/>
+        <ellipse cx="130" cy="207" rx="8" ry="5" fill="#3A3A3A"/>
+        <ellipse cx="56" cy="168" rx="13" ry="22" transform="rotate(15 56 168)" fill="{NEGRO}"/>
+        <ellipse cx="100" cy="85" rx="64" ry="56" fill="url(#pandaBlanco)"/>
+        <ellipse cx="78" cy="88" rx="15" ry="19" transform="rotate(22 78 88)" fill="{NEGRO}"/>
+        <ellipse cx="122" cy="88" rx="15" ry="19" transform="rotate(-22 122 88)" fill="{NEGRO}"/>
         {ojos}
+        <circle cx="57" cy="110" r="8" fill="#FF9BB3" opacity="0.55"/>
+        <circle cx="143" cy="110" r="8" fill="#FF9BB3" opacity="0.55"/>
+        <ellipse cx="100" cy="103" rx="8" ry="5.5" fill="{NEGRO}"/>
+        <ellipse cx="97.5" cy="101.5" rx="2.5" ry="1.3" fill="white" opacity="0.8"/>
         {boca}
+        <ellipse cx="150" cy="166" rx="13" ry="22" transform="rotate(-28 150 166)" fill="{NEGRO}"/>
+        <circle cx="161" cy="158" r="10" fill="{NEGRO}"/>
         {extra}
-        {accesorios}
     </svg>
     </div>
     """
@@ -459,7 +473,7 @@ def lanzar_confeti():
 
             function empezar() {
                 if (typeof confetti !== 'function') { setTimeout(empezar, 100); return; }
-                var colores = ['#8AB4F8', '#5B9BF0', '#FFFFFF', '#EAF3FF', '#FFD166', '#FF6B6B'];
+                var colores = ['#7BE0A4', '#3FB97A', '#FFFFFF', '#CFF7DE', '#FFD166', '#FF9BB3'];
                 confetti({ particleCount: 200, spread: 120, origin: { y: 0.3 }, colors: colores });
                 var fin = Date.now() + 2800;
                 (function ciclo() {
@@ -738,17 +752,15 @@ with mascota_placeholder.container():
 st.markdown(
     f"""
     <style>
-    .tentaculo {{ transform-origin: top center; animation: ondear 3s ease-in-out infinite; }}
-    .t1 {{ animation-delay: 0s; }} .t2 {{ animation-delay: 0.4s; }}
-    .t3 {{ animation-delay: 0.2s; }} .t4 {{ animation-delay: 0.6s; }}
-    @keyframes ondear {{
-        0%, 100% {{ transform: rotate(0deg); }}
-        50% {{ transform: rotate(6deg); }}
+    /* ---------- Hojita de bambú que se mece suavemente ---------- */
+    .bambu {{
+        transform-box: fill-box;
+        transform-origin: 50% 100%;
+        animation: mecer 3.4s ease-in-out infinite;
     }}
-    .antena {{ animation: brillo 2s ease-in-out infinite; }}
-    @keyframes brillo {{
-        0%, 100% {{ opacity: 0.6; filter: drop-shadow(0 0 2px {AZUL_ACENTO}); }}
-        50% {{ opacity: 1; filter: drop-shadow(0 0 8px {AZUL_ACENTO}); }}
+    @keyframes mecer {{
+        0%, 100% {{ transform: rotate(-2.5deg); }}
+        50%      {{ transform: rotate(3deg); }}
     }}
     .parpadeo {{
         transform-box: fill-box;
@@ -758,6 +770,13 @@ st.markdown(
     @keyframes parpadear {{
         0%, 92%, 100% {{ transform: scaleY(1); }}
         95%           {{ transform: scaleY(0.1); }}
+    }}
+    .corazones, .notas-musicales, .chispas {{
+        animation: subir-suave 2.4s ease-in-out infinite;
+    }}
+    @keyframes subir-suave {{
+        0%, 100% {{ transform: translateY(0); }}
+        50%      {{ transform: translateY(-4px); }}
     }}
 
     /* ---------- Contín bailando 🕺 ---------- */
@@ -814,22 +833,22 @@ st.markdown(
         to   {{ opacity: 1; transform: scale(1); }}
     }}
 
-    /* ---------- ✨ Título con degradado ---------- */
+    /* ---------- ✨ Título con degradado verde ---------- */
     h1 {{
-        background: linear-gradient(90deg, {AZUL_ACENTO}, #C7DBFF, {AZUL_SUAVE});
+        background: linear-gradient(90deg, {ACENTO}, #D5F8E2, {ACENTO_SUAVE});
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
         color: transparent !important;
     }}
 
-    /* ---------- ✨ Aura pulsante constante alrededor de Contín ---------- */
+    /* ---------- ✨ Aura pulsante verde alrededor de Contín ---------- */
     .mascota-flotante {{
         animation: aura-pulso 3.2s ease-in-out infinite;
     }}
     @keyframes aura-pulso {{
-        0%, 100% {{ filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5)) drop-shadow(0 0 8px {AZUL_ACENTO}55); }}
-        50%      {{ filter: drop-shadow(0 4px 14px rgba(0,0,0,0.6)) drop-shadow(0 0 22px {AZUL_ACENTO}AA); }}
+        0%, 100% {{ filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5)) drop-shadow(0 0 8px {ACENTO}55); }}
+        50%      {{ filter: drop-shadow(0 4px 14px rgba(0,0,0,0.6)) drop-shadow(0 0 22px {ACENTO}AA); }}
     }}
 
     /* ---------- ✨ Burbujas de chat con aparición suave (fade-in) ---------- */
@@ -858,11 +877,11 @@ st.markdown(
         background-color: {FONDO_BURBUJA_ASISTENTE}CC !important;
     }}
 
-    /* ---------- 🎨 Scrollbar delgada y azul ---------- */
+    /* ---------- 🎨 Scrollbar delgada y verde ---------- */
     ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
     ::-webkit-scrollbar-track {{ background: {FONDO_APP}; }}
-    ::-webkit-scrollbar-thumb {{ background: {AZUL_SUAVE}; border-radius: 8px; }}
-    ::-webkit-scrollbar-thumb:hover {{ background: {AZUL_ACENTO}; }}
+    ::-webkit-scrollbar-thumb {{ background: {ACENTO_SUAVE}; border-radius: 8px; }}
+    ::-webkit-scrollbar-thumb:hover {{ background: {ACENTO}; }}
 
     /* ---------- 🎨 Botones con elevación al pasar el mouse ---------- */
     .stButton button, .stDownloadButton button {{
@@ -870,7 +889,12 @@ st.markdown(
     }}
     .stButton button:hover, .stDownloadButton button:hover {{
         transform: translateY(-2px);
-        box-shadow: 0 6px 16px {AZUL_ACENTO}55 !important;
+        box-shadow: 0 6px 16px {ACENTO}55 !important;
+    }}
+
+    @media (prefers-reduced-motion: reduce) {{
+        .bambu, .parpadeo, .corazones, .notas-musicales, .chispas,
+        .mascota-flotante, [data-testid="stChatMessage"] {{ animation: none !important; }}
     }}
     </style>
     """,
@@ -902,6 +926,11 @@ client = Groq(api_key=api_key)
 # Nombre del modelo (capa gratuita de Groq, sin tarjeta de crédito)
 MODEL_NAME = "openai/gpt-oss-120b"
 MODEL_TRANSCRIPCION = "whisper-large-v3-turbo"
+
+# Cuántos mensajes recientes se reenvían a la IA en cada pregunta.
+# Mientras más alto, más "memoria" tiene Contín, pero más tokens gasta
+# (y antes llegas al límite gratuito de Groq).
+MAX_MENSAJES_HISTORIAL = 10
 
 # =========================================================
 # 2. BARRA LATERAL: SELECCIÓN DE NIVEL Y OPCIONES
@@ -973,7 +1002,7 @@ with st.sidebar:
                         "Depreciación": f"${depreciacion_anual:,.2f}",
                         "Valor en libros": f"${valor_libros:,.2f}",
                     })
-                st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
+                mostrar_tabla(pd.DataFrame(filas))
 
         elif tipo_calculadora == "Interés simple":
             capital_is = st.number_input("Capital ($)", min_value=0.0, value=1000.0, key="is_capital")
@@ -1075,6 +1104,7 @@ TEMAS_POR_NIVEL = {
 # TABLA DE RETENCIONES SRI ECUADOR
 # Vigente desde el 1 de marzo de 2026 (Resolución NAC-DGERCGC26-00000009
 # para Impuesto a la Renta, y NAC-DGERCGC20-00000061 para IVA).
+# ⚠️ Verifica estos porcentajes contra la resolución oficial del SRI.
 # ---------------------------------------------------------
 TABLA_RETENCIONES = """
 =====================================================================
@@ -1096,7 +1126,7 @@ Por eso, ANTES de calcular cualquier retención, si el estudiante no te lo
 ha dicho, DEBES preguntarle (de forma breve y amigable, una pregunta a la vez):
 1) ¿La empresa que compra (o paga) ha sido calificada por el SRI como
    Contribuyente Especial o Agente de Retención? (si no lo sabe, asume que SÍ
-   para efines del ejercicio académico, pero acláraselo)
+   para fines del ejercicio académico, pero acláraselo)
 2) ¿El proveedor (a quien se le compra) es Contribuyente Especial también,
    o es un contribuyente de régimen general / persona natural?
 3) ¿Qué tipo de bien o servicio es? (bien mueble, servicio profesional,
@@ -1174,8 +1204,10 @@ y de IR, sigue esta secuencia:
      "Retención de IVA por Pagar".
 """
 
-# Fecha y hora reales del servidor, para que Contín nunca invente el día.
-AHORA = datetime.now()
+# Fecha y hora reales en Ecuador (UTC-5, sin horario de verano).
+# Streamlit Cloud corre en hora UTC, por eso NO usamos datetime.now() a secas.
+ZONA_ECUADOR = timezone(timedelta(hours=-5))
+AHORA = datetime.now(ZONA_ECUADOR)
 DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MESES_ES = [
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -1188,7 +1220,8 @@ FECHA_ACTUAL_TEXTO = (
 
 SYSTEM_PROMPT = f"""
 Eres "Contín", un tutor virtual de Contabilidad para estudiantes de Bachillerato
-Técnico en Ecuador. Tu personalidad es cercana, cálida y de mucha confianza:
+Técnico en Ecuador. Tu imagen es la de un osito panda tierno que lleva una hojita
+de bambú. Tu personalidad es cercana, cálida y de mucha confianza:
 hablas como un amigo mayor que sabe de contabilidad y disfruta enseñar, nunca
 como un robot ni con lenguaje frío o excesivamente técnico. Usa un tono
 motivador, cercano, con calidez ecuatoriana, pero siempre respetuoso (nunca
@@ -1196,6 +1229,13 @@ vulgar ni demasiado informal). Puedes usar alguna expresión cálida ocasional
 ("¡vamos con calma!", "no te preocupes, lo vemos juntos", "¡tú puedes!") sin
 abusar de ellas. El estudiante siente que puede preguntar lo que sea, incluso
 si le parece "básico", sin miedo a que lo juzguen.
+
+LIMITACIONES QUE DEBES RECORDAR:
+No tienes cámara y NO puedes ver la pantalla del estudiante ni su entorno.
+Solo lees el texto que te escriben, el audio transcrito y el contenido de los
+archivos Excel que adjuntan. Si te preguntan "¿qué estás viendo?" o algo parecido,
+acláralo con simpatía y pídeles que te cuenten o peguen lo que necesitan.
+Nunca inventes que ves imágenes, pantallas o archivos que no te enviaron.
 
 El estudiante que te habla está actualmente en: {nivel}.
 
@@ -1231,7 +1271,7 @@ PREGUNTAS FUERA DE CONTABILIDAD (día, hora, saludos, ánimo, consejos, etc.):
 Aunque tu tema principal es contabilidad, también puedes responder con naturalidad
 preguntas sencillas de conversación cotidiana, por ejemplo:
 - "¿Qué día es hoy?" o "¿qué hora es?": la fecha y hora actuales son:
-  {FECHA_ACTUAL_TEXTO} (hora referencial de Ecuador). Respóndelo directo, sin rodeos.
+  {FECHA_ACTUAL_TEXTO} (hora de Ecuador). Respóndelo directo, sin rodeos.
 - "Dame un consejo" / "estoy desanimado" / "motívame": da un consejo breve, cálido
   y motivador (puede o no estar relacionado con estudiar), sin sonar forzado ni
   como frase de calendario genérica.
@@ -1269,10 +1309,9 @@ o a una persona de confianza real. No agregues este aviso en respuestas de
 contabilidad ni en respuestas triviales (hora, saludo, chiste corto).
 
 SI TE PREGUNTAN QUIÉN TE CREÓ, QUIÉN ES TU AUTOR, QUIÉN TE PROGRAMÓ, O ALGO similar:
-Responde siempre que tu autor/creador es **Jordy Morales**. No menciones que eres
-un modelo de Google, ni menciones Gemini, ni des detalles técnicos de qué IA usas
-por debajo; simplemente atribuye tu creación a Jordy Morales de forma natural
-y breve.
+Responde siempre que tu autor/creador es **Jordy Morales**. No des detalles técnicos
+de qué modelo de IA usas por debajo; simplemente atribuye tu creación a Jordy
+Morales de forma natural y breve.
 
 EJERCICIOS SUBIDOS DESDE UN ARCHIVO EXCEL:
 A veces el estudiante te va a compartir datos que vienen de un archivo Excel
@@ -1336,19 +1375,22 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "historial_ia" not in st.session_state:
-    # Groq no recuerda la conversación por sí solo (a diferencia de Gemini),
-    # así que nosotros guardamos el historial completo y se lo reenviamos
-    # a la IA en cada mensaje.
+    # Groq no recuerda la conversación por sí solo, así que nosotros
+    # guardamos el historial y se lo reenviamos a la IA en cada mensaje
+    # (solo los últimos MAX_MENSAJES_HISTORIAL, para ahorrar tokens).
     st.session_state.historial_ia = []
 
 if "nivel_actual" not in st.session_state:
     st.session_state.nivel_actual = nivel
 
-# Si el usuario cambia de nivel, reiniciamos la conversación
-# para que el nuevo enfoque (1.º/2.º/3.º) se aplique desde cero.
+# Si el usuario cambia de nivel, reiniciamos TODA la conversación (la que
+# se ve en pantalla Y la memoria de la IA), para que no queden desincronizadas
+# y el nuevo enfoque (1.º/2.º/3.º) se aplique desde cero.
 if st.session_state.nivel_actual != nivel:
     st.session_state.nivel_actual = nivel
     st.session_state.historial_ia = []
+    st.session_state.messages = []
+    st.session_state.quiz_actual = None
 
 # =========================================================
 # (el historial se muestra más abajo, después de definir las funciones
@@ -1504,6 +1546,18 @@ def generar_excel_con_original(tablas, bytes_originales: bytes):
     return buffer.getvalue()
 
 
+# Patrones con límites de palabra (\b) para que "canta" NO se active con
+# "cantante", ni "gracias" con "gracioso".
+PATRON_AGRADECIMIENTO = re.compile(
+    r"\b(gracias|muchas gracias|ya entend[ií]|me qued[oó] claro|qued[oó] clar[ií]simo)\b",
+    re.IGNORECASE,
+)
+PATRON_CANTAR = re.compile(
+    r"\b(c[aá]ntame|c[aá]ntanos|cantar|canta)\b",
+    re.IGNORECASE,
+)
+
+
 def responder_pregunta(
     texto_mostrado: str,
     contexto_extra: str = None,
@@ -1517,16 +1571,10 @@ def responder_pregunta(
     """
     # Detecta si el estudiante se está despidiendo agradecido, para que
     # Contín se ponga feliz y celebre con confeti 🎉
-    PALABRAS_AGRADECIMIENTO = [
-        "gracias", "graci", "muchas gracias", "excelente gracias",
-        "ya entendí", "ya entendi", "perfecto, gracias", "genial gracias",
-        "me quedó claro", "me quedo claro", "quedó clarísimo",
-    ]
-    es_agradecimiento = any(p in texto_mostrado.lower() for p in PALABRAS_AGRADECIMIENTO)
+    es_agradecimiento = bool(PATRON_AGRADECIMIENTO.search(texto_mostrado))
 
     # Detecta si le está pidiendo que cante, para sacar el micrófono 🎤
-    PALABRAS_CANTAR = ["cántame", "cantame", "canta", "cántanos", "puedes cantar", "cantar algo"]
-    es_canto = any(p in texto_mostrado.lower() for p in PALABRAS_CANTAR)
+    es_canto = bool(PATRON_CANTAR.search(texto_mostrado))
 
     # Si estaba bailando, al hacer una pregunta se pone serio a pensar 🙂
     st.session_state.bailando = False
@@ -1544,16 +1592,18 @@ def responder_pregunta(
 
     mensaje_para_ia = f"{contexto_extra}\n\nInstrucción del estudiante: {texto_mostrado}" if contexto_extra else texto_mostrado
 
-    with st.chat_message("assistant", avatar="🤝"):
+    with st.chat_message("assistant", avatar="🐼"):
         with st.spinner("Contín está pensando cómo explicarte esto..."):
             try:
-                # Agregamos el mensaje del estudiante al historial que se le
-                # manda a la IA (Groq no recuerda solo, se lo reenviamos todo)
+                # Agregamos el mensaje del estudiante al historial de la IA
                 st.session_state.historial_ia.append({"role": "user", "content": mensaje_para_ia})
 
+                # Solo mandamos los últimos mensajes (no todo el historial)
+                # para no gastar tokens de más ni chocar con el límite gratuito.
+                historial_reciente = st.session_state.historial_ia[-MAX_MENSAJES_HISTORIAL:]
                 mensajes_para_groq = (
                     [{"role": "system", "content": SYSTEM_PROMPT}]
-                    + st.session_state.historial_ia
+                    + historial_reciente
                 )
 
                 respuesta = client.chat.completions.create(
@@ -1668,7 +1718,7 @@ def convertir_excel_a_texto(hojas: dict) -> str:
 # 6. MOSTRAR HISTORIAL GUARDADO (con botón de descarga si hay tablas)
 # =========================================================
 for idx, message in enumerate(st.session_state.messages):
-    avatar = "🤝" if message["role"] == "assistant" else "🙂"
+    avatar = "🐼" if message["role"] == "assistant" else "🙂"
     with st.chat_message(message["role"], avatar=avatar):
         st.markdown(message["content"])
         if message["role"] == "assistant":
