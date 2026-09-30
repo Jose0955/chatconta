@@ -1,0 +1,9 @@
+# Videos de YouTube que Contín puede usar como referencia.
+# Una línea por video, con el formato:   enlace | tema
+# Las líneas que empiezan con # se ignoran.
+# Úsalos para "cómo se hace en Excel / en un programa contable".
+# NO los uses para porcentajes o leyes tributarias (eso va en la tabla oficial).
+#
+# Ejemplos del formato (reemplázalos por videos reales que hayas revisado):
+# https://www.youtube.com/watch?v=XXXXXXXXXXX | Kardex PEPS en Excel con fórmulas
+# https://youtu.be/YYYYYYYYYYY | Balance de comprobación en Excel
