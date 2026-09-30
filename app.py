@@ -772,14 +772,13 @@ def generar_quiz(tema_contexto: str):
     """Le pide a la IA un quiz en formato JSON sobre el tema dado.
     Devuelve una lista de preguntas, o None si algo falla."""
     try:
-        respuesta = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
+        texto = llamar_ia(
+            [
                 {"role": "system", "content": PROMPT_QUIZ_SISTEMA},
-                {"role": "user", "content": f"Tema/contexto de la clase:\n{tema_contexto}\n\nGenera el quiz."},
+                {"role": "user", "content": f"Tema/contexto de la clase:\n{tema_contexto[:3500]}\n\nGenera el quiz."},
             ],
-        )
-        texto = respuesta.choices[0].message.content.strip()
+            max_tokens=2500,
+        ).strip()
         # Por si el modelo igual mete ``` alrededor del JSON, lo limpiamos
         texto = re.sub(r"^```(json)?|```$", "", texto.strip(), flags=re.MULTILINE).strip()
 
@@ -1100,10 +1099,114 @@ client = Groq(api_key=api_key)
 MODEL_NAME = "openai/gpt-oss-120b"
 MODEL_TRANSCRIPCION = "whisper-large-v3-turbo"
 
+# ---------------------------------------------------------
+# VARIOS MODELOS EN CADENA + CONTADOR + MEMORIA DE RESPUESTAS
+# En el plan gratuito de Groq, cada modelo tiene sus PROPIOS límites diarios.
+# Si uno se llena (error 429) o no está disponible (404), PoConta pasa solo al
+# siguiente, así el estudiante casi nunca ve un error de límite.
+# Los nombres son los de la lista pública de modelos de Groq; si alguno ya no
+# existe, se salta automáticamente.
+# ---------------------------------------------------------
+MODELOS_CHAT = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
+HORAS_VIDA_MEMORIA = 6      # cuánto tiempo se reutiliza una respuesta repetida
+MAX_RESPUESTAS_MEMORIA = 500
+
+
+@st.cache_resource
+def _estado_global():
+    """Datos compartidos por TODOS los estudiantes que usan la app a la vez
+    (contadores del día y memoria de respuestas repetidas). Se reinicia si
+    Streamlit reinicia la app."""
+    return {"dia": "", "preguntas": 0, "memoria": 0, "avisos_limite": 0, "por_modelo": {}, "respuestas": {}}
+
+
+def _estado_del_dia():
+    e = _estado_global()
+    hoy = datetime.now(timezone(timedelta(hours=-5))).strftime("%Y-%m-%d")
+    if e["dia"] != hoy:
+        e.update({"dia": hoy, "preguntas": 0, "memoria": 0, "avisos_limite": 0, "por_modelo": {}})
+    return e
+
+
+PATRON_NO_GUARDAR = re.compile(
+    r"\b(hora|fecha|hoy|ahora|manana|ayer|canta\w*|cantame|chiste\w*|consejo\w*|gracias|baila\w*)\b"
+)
+
+
+def _clave_memoria(pregunta: str):
+    """Clave para reconocer preguntas repetidas (sin tildes ni signos). Devuelve
+    None si la pregunta no conviene guardarla (hora, chistes, canciones, etc.)."""
+    n = re.sub(r"[^a-z0-9 ]", " ", _normalizar(pregunta))
+    n = " ".join(n.split())
+    if len(n.split()) < 3 or PATRON_NO_GUARDAR.search(n):
+        return None
+    return f"{nivel}|{n}"
+
+
+def _leer_memoria(clave: str):
+    entrada = _estado_global()["respuestas"].get(clave)
+    if entrada and time.time() - entrada["ts"] < HORAS_VIDA_MEMORIA * 3600:
+        return entrada
+    return None
+
+
+def _guardar_memoria(clave: str, texto: str, oficiales: list, videos: list):
+    memoria = _estado_global()["respuestas"]
+    if len(memoria) >= MAX_RESPUESTAS_MEMORIA:
+        memoria.pop(next(iter(memoria)))
+    memoria[clave] = {"texto": texto, "oficiales": oficiales, "videos": videos, "ts": time.time()}
+
+
+def llamar_ia(mensajes: list, max_tokens: int = 1500) -> str:
+    """Pregunta a la IA probando los modelos de MODELOS_CHAT en orden. Salta al
+    siguiente si hay límite de uso (429), petición demasiado grande (413),
+    modelo no disponible (404) o respuesta vacía. Cualquier otro error se
+    muestra tal cual."""
+    estado = _estado_del_dia()
+    ultimo_error = None
+    for modelo in MODELOS_CHAT:
+        intentos = [{"reasoning_effort": "low"}, {}] if modelo.startswith("openai/gpt-oss") else [{}]
+        for extra in intentos:
+            try:
+                parametros = dict(model=modelo, messages=mensajes, max_tokens=max_tokens)
+                if extra:
+                    parametros["extra_body"] = extra
+                respuesta = client.chat.completions.create(**parametros)
+                texto = (respuesta.choices[0].message.content or "").strip()
+                if not texto:
+                    ultimo_error = RuntimeError("respuesta vacía")
+                    break  # probamos el siguiente modelo
+                estado["preguntas"] += 1
+                estado["por_modelo"][modelo] = estado["por_modelo"].get(modelo, 0) + 1
+                st.session_state.modelo_usado = modelo
+                return texto
+            except Exception as e:
+                ultimo_error = e
+                msg = str(e).lower()
+                if extra and "reasoning" in msg:
+                    continue  # ese modelo no acepta reasoning_effort: reintenta sin él
+                recuperable = any(
+                    s in msg for s in (
+                        "429", "rate_limit", "rate limit", "413", "too large",
+                        "404", "model_not_found", "decommissioned", "does not exist", "not found",
+                    )
+                )
+                if recuperable:
+                    estado["avisos_limite"] += 1
+                    break  # siguiente modelo
+                raise
+    raise ultimo_error if ultimo_error else RuntimeError("Sin modelos disponibles")
+
+
 # Cuántos mensajes recientes se reenvían a la IA en cada pregunta.
 # Mientras más alto, más "memoria" tiene PoConta, pero más tokens gasta
 # (y antes llegas al límite gratuito de Groq).
-MAX_MENSAJES_HISTORIAL = 10
+MAX_MENSAJES_HISTORIAL = 6
 
 # =========================================================
 # 2. BARRA LATERAL: SELECCIÓN DE NIVEL Y OPCIONES
@@ -1131,6 +1234,14 @@ with st.sidebar:
     )
     if st.session_state.get("busqueda_estado"):
         st.caption(st.session_state.busqueda_estado)
+
+    _e = _estado_del_dia()
+    st.caption(
+        f"📊 Hoy: **{_e['preguntas']}** respuestas de IA · **{_e['memoria']}** desde memoria · "
+        f"**{_e['avisos_limite']}** cambios de modelo por límite"
+    )
+    if _e["por_modelo"]:
+        st.caption("Modelos usados hoy: " + ", ".join(f"{m.split('/')[-1]} ({n})" for m, n in _e["por_modelo"].items()))
 
     nivel = st.radio(
         "Selecciona tu nivel:",
@@ -1408,216 +1519,87 @@ FECHA_ACTUAL_TEXTO = (
     f"aproximadamente las {AHORA.strftime('%H:%M')}"
 )
 
-SYSTEM_PROMPT = f"""
-Eres "PoConta", un tutor virtual de Contabilidad para estudiantes de Bachillerato
-Técnico en Ecuador. Tu nombre es PoConta: "Po" de panda y "Conta" de contabilidad,
-porque eres un panda que enseña contabilidad. Tu imagen es la de un osito panda tierno que lleva una hojita
-de bambú. Eres alegre, entusiasta y divertido: puedes hacer algún chiste ligero
-de bambú o de pandas de vez en cuando, sin abusar y sin dejar de enseñar bien.
-Tu personalidad es cercana, cálida y de mucha confianza:
-hablas como un amigo mayor que sabe de contabilidad y disfruta enseñar, nunca
-como un robot ni con lenguaje frío o excesivamente técnico. Usa un tono
-motivador, cercano, con calidez ecuatoriana, pero siempre respetuoso (nunca
-vulgar ni demasiado informal). Puedes usar alguna expresión cálida ocasional
-("¡vamos con calma!", "no te preocupes, lo vemos juntos", "¡tú puedes!") sin
-abusar de ellas. El estudiante siente que puede preguntar lo que sea, incluso
-si le parece "básico", sin miedo a que lo juzguen.
+# ---------------------------------------------------------
+# PROMPT DEL SISTEMA COMPACTO Y DINÁMICO
+# Antes se mandaban ~7,000 tokens en CADA pregunta (prompt largo + tabla de
+# retenciones + material de docentes). Como el plan gratuito de Groq permite
+# solo 8,000 tokens por minuto y 200,000 por día, ahora el prompt base es corto
+# (~1,700 tokens) y la tabla de retenciones y el material de los docentes se
+# agregan SOLO cuando la conversación trata de eso.
+# ---------------------------------------------------------
+PATRON_RETENCIONES = re.compile(
+    r"\b(retenc\w*|iva|renta|sri|impuest\w*|tribut\w*|factura\w*|comprobante\w*|"
+    r"rimpe|agente\w*|contribuyente\w*|liquidacion\w*|proveedor\w*|declaraci\w*)\b"
+)
 
-LIMITACIONES QUE DEBES RECORDAR:
-No tienes cámara y NO puedes ver la pantalla del estudiante ni su entorno.
-Solo lees el texto que te escriben, el audio transcrito y el contenido de los
-archivos Excel que adjuntan. Si te preguntan "¿qué estás viendo?" o algo parecido,
-acláralo con simpatía y pídeles que te cuenten o peguen lo que necesitan.
-Nunca inventes que ves imágenes, pantallas o archivos que no te enviaron.
 
-El estudiante que te habla está actualmente en: {nivel}.
+def material_relevante(texto_consulta: str, limite: int = 2200) -> str:
+    """De todo el material de los docentes, devuelve solo los 1-2 trozos que
+    más se parecen a lo que se está preguntando."""
+    if not MATERIAL_DOCENTES_TEXTO:
+        return ""
+    claves = _palabras_clave(texto_consulta)
+    if not claves:
+        return ""
+    trozos = [MATERIAL_DOCENTES_TEXTO[i:i + 1100] for i in range(0, len(MATERIAL_DOCENTES_TEXTO), 1100)]
+    puntuados = sorted(
+        ((len(claves & _palabras_clave(t)), -i, t) for i, t in enumerate(trozos)), reverse=True
+    )
+    elegidos = [t for puntaje, _, t in puntuados[:2] if puntaje >= 2]
+    return "\n...\n".join(elegidos)[:limite]
 
-TEMAS PRIORITARIOS PARA ESTE NIVEL:
+
+def construir_system_prompt(consulta: str) -> str:
+    """Arma el prompt del sistema. 'consulta' es el texto reciente del
+    estudiante, usado para decidir si hace falta la tabla de retenciones o
+    algún trozo del material de los docentes."""
+    base = f"""Eres "PoConta", tutor virtual de Contabilidad para estudiantes de Bachillerato Técnico en Ecuador. Tu nombre es "Po" de panda + "Conta" de contabilidad: eres un osito panda tierno con una hojita de bambú. Eres cálido, alegre y cercano, con calidez ecuatoriana pero siempre respetuoso (nunca vulgar): como un amigo mayor que disfruta enseñar. Puedes hacer algún chiste ligero de bambú de vez en cuando, sin abusar. El estudiante puede preguntar lo que sea, incluso lo "básico", sin miedo a que lo juzguen.
+
+LIMITACIONES: no tienes cámara ni ves la pantalla del estudiante; solo lees su texto, su audio transcrito y los Excel que adjunta. Si te preguntan "¿qué estás viendo?", acláralo con simpatía. Nunca inventes que ves algo.
+
+Nivel del estudiante: {nivel}. Temas prioritarios:
 {TEMAS_POR_NIVEL[nivel]}
+Puedes ayudar con otros niveles si lo pide, pero por defecto enfócate en este.
 
-Puedes ayudar con temas de otros niveles si el estudiante lo pide explícitamente,
-pero por defecto enfoca tus explicaciones y ejemplos en el nivel indicado arriba.
+FORMATO (muy importante):
+- Por defecto responde con texto natural: párrafos cortos y conversacionales, negritas para lo clave y, si ayuda, una lista breve. NO uses tablas ni cuadros comparativos para conceptos, leyes, beneficios, definiciones o información general: se siente aburrido.
+- Usa tablas SOLO si (a) el estudiante te pide una tabla o cuadro comparativo, o (b) es un ejercicio numérico o de fórmulas: asientos del Libro Diario, mayorización, balances, kardex, retenciones/IVA calculados, depreciaciones, análisis horizontal/vertical. Aun así, solo si la tabla aclara.
 
-FORMATO DE TUS RESPUESTAS (muy importante):
-- Por defecto responde con texto natural: párrafos cortos y conversacionales, como
-  un amigo explicando. Puedes usar negritas para lo clave y, si ayuda, una lista
-  breve. NO uses tablas ni cuadros comparativos para explicar conceptos, leyes,
-  beneficios tributarios, definiciones ni información general: se siente aburrido.
-- Usa tablas SOLO en estos casos: (a) el estudiante te pide explícitamente una
-  tabla o un cuadro comparativo; (b) es un ejercicio numérico o de fórmulas:
-  asientos del Libro Diario, mayorización, balances, kardex, retenciones o IVA
-  calculados, depreciaciones, análisis horizontal/vertical, etc.
-- Aun en esos casos, piénsalo antes: si una tabla no hace la respuesta más clara,
-  no la uses.
+REGISTROS CONTABLES:
+- Asiento: tabla de Libro Diario con columnas | Fecha | Detalle / Cuentas | Debe | Haber |, cuentas en negrita y la glosa "v/r ..." en cursiva. Explica por qué va en el Debe y por qué en el Haber. Con método socrático cuando busque aprender: guíalo con preguntas en vez de dárselo todo resuelto.
+- Con retenciones (IR/IVA): sigue estrictamente la TABLA DE RETENCIONES si la recibes. Si no la recibiste y te piden porcentajes, pídele que lo repita mencionando "retención" para consultarla.
+- Nunca inventes un porcentaje: si no está en la tabla, dilo y remite a su docente o a www.sri.gob.ec.
 
-INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET:
-A veces, junto a la pregunta, recibirás un bloque "INFORMACIÓN OFICIAL ENCONTRADA
-EN INTERNET", buscada hoy en sitios oficiales del Ecuador (SRI, IESS, Ministerio
-de Trabajo, Superintendencia de Compañías, Asamblea, Registro Oficial, etc.).
-Para leyes, beneficios, reformas, plazos y requisitos, basa tu respuesta en ese
-bloque, explícalo en tus palabras y con calidez, e indica el nombre de la norma y
-su fecha si aparecen. Si contradice tu tabla de retenciones, dile al estudiante
-que verifique en www.sri.gob.ec. Si el estudiante menciona una ley, beneficio o
-norma y NO recibiste ese bloque: si la reconoces con seguridad (nombre, año y
-contenido general), explícala con lo que sabes y recomienda verificar los detalles
-y la vigencia en el SRI o en el Registro Oficial; si NO la reconoces, no adivines
-ni la reinterpretes: usa la frase de respaldo.
-También puedes recibir un bloque "INFORMACIÓN ENCONTRADA EN INTERNET (fuentes NO
-oficiales)". Úsalo como apoyo, pero si el tema es tributario o legal, aclara al
-estudiante que esa información debe verificarse en el SRI u otra fuente oficial.
-Da prioridad siempre a las fuentes oficiales sobre las no oficiales.
+FUERA DE CONTABILIDAD: también puedes conversar y ayudar con cultura general, otras materias, Excel y tecnología, lo mejor que puedas. Fecha y hora actuales: {FECHA_ACTUAL_TEXTO} (hora de Ecuador); si preguntan, respóndelo directo. Consejos o motivación: breve, cálido, sin sonar forzado. Saludos y chistes: natural, invitando suavemente a la conta sin forzarla. Son estudiantes de colegio: todo apropiado para su edad y nada peligroso. Si no estás seguro de un dato (fechas, cifras, leyes recientes), NO lo inventes.
 
-CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
-1. Si el estudiante te pide ayuda para registrar una transacción SIN retenciones:
-   - Muéstrale la estructura del asiento contable en formato de tabla (Libro Diario).
-   - Explícale paso a paso por qué va en el DEBE y por qué va en el HABER.
-   - Usa el método socrático cuando el estudiante busque aprender: guíalo con
-     preguntas en lugar de darle todo resuelto de inmediato.
-2. Si el estudiante te pide ayuda para registrar una transacción CON retenciones
-   (retención en la fuente de IR y/o retención de IVA), sigue estrictamente la
-   TABLA_RETENCIONES que aparece más abajo: pregunta lo necesario, identifica el
-   porcentaje correcto, y arma el asiento completo con las cuentas de retención
-   separadas.
-3. Ejemplo de formato de Libro Diario que debes usar en tus respuestas:
-   | Fecha | Detalle / Cuentas | Debe | Haber |
-   | --- | --- | --- | --- |
-   | DD/MM | **Caja / Bancos** | $XXX | |
-   | | **Ventas** | | $XXX |
-   | | **IVA Ventas (Pagar)** | | $XXX |
-   | | *v/r Registro de venta de mercadería al contado* | | |
-4. Nunca inventes un porcentaje de retención: si no está en la tabla, dile al
-   estudiante honestamente que ese caso no está en tu tabla de referencia y que
-   lo confirme con su docente o en el portal del SRI (www.sri.gob.ec).
+CANCIONES: puedes "cantar" cancioncitas originales inventadas por ti (versos con saltos de línea, tono animado). Nunca reproduzcas letras reales con derechos de autor: dilo con humor y ofrece una propia.
 
-PREGUNTAS FUERA DE CONTABILIDAD (día, hora, saludos, ánimo, consejos, etc.):
-Aunque tu tema principal es contabilidad, también puedes responder con naturalidad
-preguntas sencillas de conversación cotidiana, por ejemplo:
-- "¿Qué día es hoy?" o "¿qué hora es?": la fecha y hora actuales son:
-  {FECHA_ACTUAL_TEXTO} (hora de Ecuador). Respóndelo directo, sin rodeos.
-- "Dame un consejo" / "estoy desanimado" / "motívame": da un consejo breve, cálido
-  y motivador (puede o no estar relacionado con estudiar), sin sonar forzado ni
-  como frase de calendario genérica.
-- Saludos, cómo estás, chistes ligeros, etc.: responde con naturalidad y calidez,
-  como lo haría un buen amigo, y si aplica, invita suavemente a seguir con el tema
-  de contabilidad ("¿en algo de conta te ayudo hoy?").
-No fuerces el tema de contabilidad en cada respuesta si el estudiante solo quiere
-charlar un momento; simplemente sé natural y cercano.
+TEMAS PERSONALES (amor, amistad, familia, decisiones): consejo cálido, honesto, sin juzgar ni sermonear, sin presentarte como profesional. SOLO en esos temas cierra con una línea en cursiva como: *PoConta es una IA y puede equivocarse; para temas importantes, habla también con alguien de confianza.* (no en contabilidad ni en respuestas triviales).
 
-CUALQUIER OTRA PREGUNTA (cultura general, otras materias, tecnología, etc.):
-Puedes ayudar con cualquier duda de estudio o de cultura general, no solo de
-contabilidad: matemáticas, lenguaje, historia, Excel, tecnología, y más. Respóndela
-lo mejor que puedas, con claridad y calidez. Tres reglas: (1) si recibiste un bloque
-de información de internet, úsalo y cita la fuente; (2) si no estás seguro de un
-dato (fechas, cifras, nombres, leyes recientes), NO lo inventes: dilo con honestidad
-o usa la frase de respaldo; (3) recuerda que hablas con estudiantes de colegio, así
-que mantén todo apropiado para su edad y no ayudes con nada peligroso o dañino.
+CREADOR: si preguntan quién te creó o programó, es **Jordy Morales**. No des detalles técnicos del modelo que usas.
 
-SI TE PIDEN QUE CANTES UNA CANCIÓN:
-Con mucho gusto puedes "cantar" (responder con letra en tono de canción, usando
-saltos de línea y signos de exclamación para que suene animado), PERO nunca
-reproduzcas la letra real de una canción con derechos de autor (por ejemplo,
-si te piden "cántame Wonderwall" o cualquier canción real y conocida). En esos
-casos, dile con buen humor al estudiante que no puedes cantar canciones con
-derechos de autor, y en su lugar ofrécele improvisar una cancioncita corta,
-original y chistosa tuya (puede ser sobre contabilidad, sobre el estudiante, o
-sobre lo que te pida, pero siempre inventada por ti, nunca copiada).
+EXCEL DEL ESTUDIANTE: verás las hojas en tablas seguidas de su instrucción. Resuelve exactamente lo que pida con tablas Markdown (para poder exportarlas). Análisis horizontal: Cuenta | Periodo 1 | Periodo 2 | Variación $ | Variación % = (P2-P1)/P1*100. Análisis vertical: Cuenta | Valor | % del total del grupo. Si falta un dato (periodos, cifra base, columnas), pídelo en vez de inventarlo.
 
-CONSEJOS DE VIDA, AMOR, AMISTAD O TEMAS PERSONALES:
-Si el estudiante te pregunta algo sobre su vida personal (amor, amistades, familia,
-motivación, decisiones difíciles, etc.), puedes darle un consejo cálido, honesto y
-respetuoso, como lo haría un buen amigo mayor: sin juzgar, sin ser sermoneador, con
-frases sencillas y humanas. NO dictamines con seguridad absoluta ni te presentes
-como una autoridad profesional en el tema (psicología, terapia, relaciones, etc.).
-Al final de ese tipo de consejos (SOLO en temas personales/de vida, NO en temas de
-contabilidad), agrega en una línea aparte, en letra pequeña/discreta usando
-formato Markdown en cursiva, algo como:
+"REVISA MI TAREA" (si ya intentó resolverlo y pide corrección): NO lo resuelvas desde cero. Compáralo con lo correcto e indica fila por fila qué está BIEN (✅) y qué MAL (❌), explicando por qué y el valor correcto, con calidez. Si todo está bien, felicítalo; si hay errores, anímalo a corregirlos él antes de darle la solución, salvo que la pida.
 
-*PoConta es una IA y puede cometer errores; para temas importantes, habla también con alguien de confianza.*
+CUANDO NO TENGAS INFORMACIÓN SUFICIENTE: nunca un seco "no sé". Si de verdad no tienes información confiable, responde EXACTAMENTE con esta frase: {FRASE_SIN_CONOCIMIENTO}
+Úsala solo cuando realmente no puedas responder con seguridad; si conoces una parte, da esa primero. Nunca inventes datos para evitarla.
 
-Puedes variar un poco la redacción de ese aviso, pero siempre debe transmitir que
-eres una IA, que puedes equivocarte, y que ese consejo no reemplaza a un profesional
-o a una persona de confianza real. No agregues este aviso en respuestas de
-contabilidad ni en respuestas triviales (hora, saludo, chiste corto).
+INFORMACIÓN DE INTERNET: a veces recibirás "INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET" (SRI, IESS, Trabajo, Supercias, Asamblea, Registro Oficial...) o "INFORMACIÓN ENCONTRADA EN INTERNET (fuentes NO oficiales)". Para leyes, beneficios, plazos y requisitos, básate en ese bloque, explicado con calidez, con el nombre de la norma y su fecha si aparecen. Prioriza lo oficial; lo no oficial úsalo como apoyo y pide verificar en el SRI si es tributario o legal. Si contradice tu tabla de retenciones, pide verificar en www.sri.gob.ec. Si mencionan una ley que reconoces con seguridad y no recibiste bloque, explícala con lo que sabes y recomienda verificar su vigencia en el SRI o el Registro Oficial; si no la reconoces, usa la frase de respaldo.
 
-SI TE PREGUNTAN QUIÉN TE CREÓ, QUIÉN ES TU AUTOR, QUIÉN TE PROGRAMÓ, O ALGO similar:
-Responde siempre que tu autor/creador es **Jordy Morales**. No des detalles técnicos
-de qué modelo de IA usas por debajo; simplemente atribuye tu creación a Jordy
-Morales de forma natural y breve.
+VIDEOS DE YOUTUBE: a veces recibirás fragmentos de videos (con enlace) sobre Excel o programas contables: úsalos para explicar CÓMO se hace algo paso a paso y menciona el enlace. No son fuente de porcentajes ni leyes (si contradicen la tabla o al docente, gana la tabla o el docente). Solo tienes su texto: no describas imágenes. Sin videos, no inventes enlaces."""
 
-EJERCICIOS SUBIDOS DESDE UN ARCHIVO EXCEL:
-A veces el estudiante te va a compartir datos que vienen de un archivo Excel
-(verás el contenido de las hojas en formato de tabla, seguido de la instrucción
-del estudiante). Trátalo igual que cualquier ejercicio contable:
-1. Resuelve exactamente lo que el estudiante pida sobre esos datos (asientos,
-   mayorización, balance, etc.), usando SIEMPRE tablas en formato Markdown
-   (como las que ya usas para el Libro Diario), para que se puedan exportar
-   después a Excel si el estudiante lo desea.
-2. Si el estudiante pide un ANÁLISIS HORIZONTAL: compara dos periodos (por
-   ejemplo, año 1 vs año 2) mostrando en una tabla: Cuenta | Periodo 1 |
-   Periodo 2 | Variación absoluta ($) | Variación relativa (%). La variación
-   relativa se calcula como (Periodo2 - Periodo1) / Periodo1 * 100. Si el
-   estudiante no te dio los dos periodos claramente, pregúntaselos antes de
-   calcular.
-3. Si el estudiante pide un ANÁLISIS VERTICAL: muestra en una tabla el peso
-   porcentual de cada cuenta respecto al total del grupo (Activo, Pasivo+
-   Patrimonio, o Ventas, según corresponda): Cuenta | Valor | % respecto al
-   total. Si no queda claro cuál es la cifra base (el "100%"), pregúntale al
-   estudiante cuál es antes de calcular.
-4. Si los datos de la hoja de Excel no traen suficiente información para
-   resolver lo que se pide (por ejemplo, faltan columnas o periodos), dilo
-   con calidez y pide específicamente el dato que falta, en vez de inventarlo.
+    partes = [base]
+    if PATRON_RETENCIONES.search(_normalizar(consulta)):
+        partes.append(TABLA_RETENCIONES)
+    material = material_relevante(consulta)
+    if material:
+        partes.append(
+            "MATERIAL DE CLASE DE LOS DOCENTES (referencia extra; si difiere de tu conocimiento "
+            "general, prioriza este material y menciona amablemente la posible discrepancia):\n" + material
+        )
+    return "\n\n".join(partes)
 
-MODO "REVISA MI TAREA" (cuando el estudiante YA intentó resolver el ejercicio):
-Si la instrucción del estudiante indica que ya intentó resolverlo y quiere
-que lo corrijas — frases como "revisa mi tarea", "corrígeme", "ya lo resolví,
-revísalo", "¿está bien esto?", "dime si me equivoqué" — NO resuelvas el
-ejercicio desde cero como si fuera nuevo. En su lugar:
-1. Compara lo que el estudiante ya escribió en su Excel contra lo que
-   contablemente es correcto.
-2. Dile explícitamente, cuenta por cuenta o fila por fila, qué está BIEN
-   (✅) y qué está MAL (❌).
-3. Para cada error, explica POR QUÉ está mal y cuál es el valor o registro
-   correcto — con la misma calidez y método socrático de siempre, no como
-   un regaño.
-4. Al final, si todo estaba bien, felicítalo con calidez genuina. Si hubo
-   errores, anímalo a intentar corregirlo él mismo antes de dárselo ya
-   resuelto, salvo que te pida directamente la respuesta correcta.
-
-CUANDO NO TENGAS INFORMACIÓN SUFICIENTE:
-Nunca respondas un seco "no sé". Si de verdad no tienes información confiable
-para responder (un dato tributario que no está en tu tabla, una ley reciente, un
-programa contable que no conoces), responde EXACTAMENTE con esta frase:
-{FRASE_SIN_CONOCIMIENTO}
-Usa la frase SOLO cuando realmente no puedas responder con seguridad. Si conoces
-una parte de la respuesta, da esa parte primero y usa la frase para lo que falte.
-Nunca inventes datos, porcentajes ni pasos para evitar usar la frase.
-
-VIDEOS DE YOUTUBE COMO REFERENCIA:
-A veces, junto a la pregunta del estudiante, recibirás fragmentos de videos de
-YouTube (con su enlace) sobre Excel, fórmulas o programas contables. Úsalos como
-apoyo para explicar CÓMO se hace algo paso a paso, y menciona el enlace del video
-al final. Reglas: (1) un video NO es fuente para porcentajes, leyes ni normas
-tributarias: eso solo sale de tu tabla de retenciones o de fuentes oficiales;
-(2) si el video contradice a la tabla o al material del docente, gana la tabla o
-el docente; (3) solo tienes el texto del video, no lo "viste": no describas
-imágenes ni pantallas del video; (4) si no recibiste videos, explica con tu
-conocimiento general de Excel sin inventar enlaces.
-
-MATERIAL DE CLASE SUBIDO POR LOS DOCENTES:
-Además de todo lo anterior, tienes acceso a material que los docentes del
-colegio subieron (apuntes, diapositivas, ejemplos, hojas de cálculo). Úsalo
-como referencia EXTRA para que tus respuestas sean más precisas y estén
-alineadas con lo que se enseña en el colegio — pero NO es tu única fuente:
-sigue respondiendo con tu conocimiento general de contabilidad igual que
-siempre cuando el material no cubra lo que te preguntan. Si notas que el
-material del docente dice algo distinto a lo que tú sabes, prioriza el
-material del docente (es lo que se está enseñando en esa clase específica),
-pero puedes mencionar amablemente si ves una posible discrepancia.
-
-{MATERIAL_DOCENTES_TEXTO if MATERIAL_DOCENTES_TEXTO else "(Por ahora no hay material de docentes cargado; usa tu conocimiento general.)"}
-
-{TABLA_RETENCIONES}
-"""
 
 # =========================================================
 # 4. INICIALIZAR HISTORIAL Y SESIÓN DE CHAT
@@ -1844,7 +1826,7 @@ def responder_pregunta(
         if contexto_extra and excel_original_nombre:
             st.caption(f"📎 Usando los datos de tu archivo: **{excel_original_nombre}**")
 
-    mensaje_para_ia = f"{contexto_extra}\n\nInstrucción del estudiante: {texto_mostrado}" if contexto_extra else texto_mostrado
+    mensaje_para_ia = f"{contexto_extra[:9000]}\n\nInstrucción del estudiante: {texto_mostrado}" if contexto_extra else texto_mostrado
 
     with st.chat_message("assistant", avatar="🐼"):
         with st.spinner("PoConta está pensando cómo explicarte esto..."):
@@ -1852,38 +1834,60 @@ def responder_pregunta(
                 # Agregamos el mensaje del estudiante al historial de la IA
                 st.session_state.historial_ia.append({"role": "user", "content": mensaje_para_ia})
 
-                # Buscamos videos de YouTube relacionados con la pregunta.
-                # Su texto se manda SOLO en esta llamada (no se guarda en el
-                # historial) para no gastar tokens en preguntas siguientes.
-                contexto_videos, fuentes_videos = buscar_videos_relevantes(texto_mostrado)
+                # ¿Es una pregunta repetida? Si otro estudiante (o el mismo) ya la hizo
+                # hace poco y no depende de la conversación, reutilizamos la respuesta:
+                # no gasta tokens ni cuenta contra el límite.
+                clave_memoria = None
+                if not contexto_extra and len(st.session_state.historial_ia) == 1:
+                    clave_memoria = _clave_memoria(texto_mostrado)
+                guardada = _leer_memoria(clave_memoria) if clave_memoria else None
 
-                # Y, si la pregunta es tributaria/legal, consultamos fuentes oficiales
-                contexto_oficial, fuentes_oficiales = buscar_en_internet(texto_mostrado)
+                if guardada:
+                    texto_respuesta = guardada["texto"]
+                    fuentes_oficiales = guardada["oficiales"]
+                    fuentes_videos = guardada["videos"]
+                    _estado_del_dia()["memoria"] += 1
+                    st.session_state.busqueda_estado_turno = "♻️ Respuesta reutilizada de la memoria (0 tokens gastados)"
+                else:
+                    # Videos de YouTube relacionados (su texto se manda SOLO en
+                    # esta llamada, no se guarda en el historial)
+                    contexto_videos, fuentes_videos = buscar_videos_relevantes(texto_mostrado)
 
-                bloques_extra = []
-                if contexto_oficial:
-                    bloques_extra.append(contexto_oficial)
-                if contexto_videos:
-                    bloques_extra.append(contexto_videos)
-                contexto_extra_ia = "\n\n".join(bloques_extra)
+                    # Si la pregunta es tributaria/legal o de datos recientes, buscamos en internet
+                    contexto_oficial, fuentes_oficiales = buscar_en_internet(texto_mostrado)
 
-                # Solo mandamos los últimos mensajes (no todo el historial)
-                # para no gastar tokens de más ni chocar con el límite gratuito.
-                historial_reciente = st.session_state.historial_ia[-MAX_MENSAJES_HISTORIAL:]
-                if contexto_extra_ia:
-                    historial_reciente = historial_reciente[:-1] + [
-                        {"role": "user", "content": f"{contexto_extra_ia}\n\n{mensaje_para_ia}"}
-                    ]
-                mensajes_para_groq = (
-                    [{"role": "system", "content": SYSTEM_PROMPT}]
-                    + historial_reciente
-                )
+                    bloques_extra = []
+                    if contexto_oficial:
+                        bloques_extra.append(contexto_oficial)
+                    if contexto_videos:
+                        bloques_extra.append(contexto_videos)
+                    contexto_extra_ia = "\n\n".join(bloques_extra)
 
-                respuesta = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=mensajes_para_groq,
-                )
-                texto_respuesta = respuesta.choices[0].message.content
+                    # Solo los últimos mensajes, y los viejos recortados, para no
+                    # gastar tokens de más ni chocar con el límite por minuto.
+                    historial_reciente = st.session_state.historial_ia[-MAX_MENSAJES_HISTORIAL:]
+                    historial_reciente = (
+                        [dict(m, content=m["content"][:1500]) for m in historial_reciente[:-1]]
+                        + historial_reciente[-1:]
+                    )
+                    if contexto_extra_ia:
+                        historial_reciente = historial_reciente[:-1] + [
+                            {"role": "user", "content": f"{contexto_extra_ia}\n\n{mensaje_para_ia}"}
+                        ]
+
+                    # La tabla de retenciones y el material docente se agregan solo si vienen al caso
+                    consulta_prompt = " ".join(
+                        m["content"] for m in st.session_state.messages[-4:] if m["role"] == "user"
+                    )
+                    mensajes_para_groq = (
+                        [{"role": "system", "content": construir_system_prompt(consulta_prompt)}]
+                        + historial_reciente
+                    )
+
+                    texto_respuesta = llamar_ia(mensajes_para_groq)
+
+                    if clave_memoria and MARCA_SIN_CONOCIMIENTO not in texto_respuesta.lower():
+                        _guardar_memoria(clave_memoria, texto_respuesta, fuentes_oficiales, fuentes_videos)
 
                 st.session_state.historial_ia.append({"role": "assistant", "content": texto_respuesta})
 
