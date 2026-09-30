@@ -1124,10 +1124,10 @@ with st.sidebar:
         st.rerun()
 
     st.session_state.buscar_oficial = st.toggle(
-        "🌐 Buscar en fuentes oficiales (SRI, IESS...)",
+        "🌐 Buscar en internet (oficiales primero)",
         value=st.session_state.get("buscar_oficial", True),
         help="Para preguntas de leyes, beneficios, retenciones y datos tributarios, "
-             "consulta sitios oficiales del Ecuador. Apágalo si llegas al límite de uso gratuito.",
+             "consulta primero sitios oficiales del Ecuador (SRI, IESS...) y luego internet. Apágalo si llegas al límite de uso gratuito.",
     )
     if st.session_state.get("busqueda_estado"):
         st.caption(st.session_state.busqueda_estado)
@@ -1460,6 +1460,10 @@ su fecha si aparecen. Si contradice tu tabla de retenciones, dile al estudiante
 que verifique en www.sri.gob.ec. Si el estudiante menciona una ley, beneficio o
 norma que no reconoces y no recibiste ese bloque, NO adivines ni la reinterpretes:
 usa la frase de respaldo.
+También puedes recibir un bloque "INFORMACIÓN ENCONTRADA EN INTERNET (fuentes NO
+oficiales)". Úsalo como apoyo, pero si el tema es tributario o legal, aclara al
+estudiante que esa información debe verificarse en el SRI u otra fuente oficial.
+Da prioridad siempre a las fuentes oficiales sobre las no oficiales.
 
 CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
 1. Si el estudiante te pide ayuda para registrar una transacción SIN retenciones:
@@ -1496,6 +1500,15 @@ preguntas sencillas de conversación cotidiana, por ejemplo:
   de contabilidad ("¿en algo de conta te ayudo hoy?").
 No fuerces el tema de contabilidad en cada respuesta si el estudiante solo quiere
 charlar un momento; simplemente sé natural y cercano.
+
+CUALQUIER OTRA PREGUNTA (cultura general, otras materias, tecnología, etc.):
+Puedes ayudar con cualquier duda de estudio o de cultura general, no solo de
+contabilidad: matemáticas, lenguaje, historia, Excel, tecnología, y más. Respóndela
+lo mejor que puedas, con claridad y calidez. Tres reglas: (1) si recibiste un bloque
+de información de internet, úsalo y cita la fuente; (2) si no estás seguro de un
+dato (fechas, cifras, nombres, leyes recientes), NO lo inventes: dilo con honestidad
+o usa la frase de respaldo; (3) recuerda que hablas con estudiantes de colegio, así
+que mantén todo apropiado para su edad y no ayudes con nada peligroso o dañino.
 
 SI TE PIDEN QUE CANTES UNA CANCIÓN:
 Con mucho gusto puedes "cantar" (responder con letra en tono de canción, usando
@@ -1843,14 +1856,11 @@ def responder_pregunta(
                 contexto_videos, fuentes_videos = buscar_videos_relevantes(texto_mostrado)
 
                 # Y, si la pregunta es tributaria/legal, consultamos fuentes oficiales
-                contexto_oficial, fuentes_oficiales = buscar_en_fuentes_oficiales(texto_mostrado)
+                contexto_oficial, fuentes_oficiales = buscar_en_internet(texto_mostrado)
 
                 bloques_extra = []
                 if contexto_oficial:
-                    bloques_extra.append(
-                        "INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET (sitios oficiales del "
-                        f"Ecuador, consultada hoy):\n{contexto_oficial}"
-                    )
+                    bloques_extra.append(contexto_oficial)
                 if contexto_videos:
                     bloques_extra.append(contexto_videos)
                 contexto_extra_ia = "\n\n".join(bloques_extra)
@@ -1878,8 +1888,13 @@ def responder_pregunta(
                 # Si se usaron videos de YouTube, dejamos los enlaces a la vista
                 texto_final = texto_respuesta
                 if fuentes_oficiales:
-                    enlaces_of = "  \n".join(f"🏛️ {url}" for url in fuentes_oficiales)
-                    texto_final += f"\n\n**Fuentes oficiales consultadas:**  \n{enlaces_of}"
+                    enlaces_of = "  \n".join(
+                        f"{'🏛️' if es_url_oficial(url) else '🌐'} {url}" for url in fuentes_oficiales
+                    )
+                    texto_final += (
+                        "\n\n**Fuentes consultadas** (🏛️ oficial · 🌐 no oficial, verifícala):  \n"
+                        f"{enlaces_of}"
+                    )
                 if fuentes_videos:
                     enlaces = "  \n".join(f"🎥 [{tema}]({url})" for tema, url in fuentes_videos)
                     texto_final += f"\n\n**Videos de referencia:**  \n{enlaces}"
@@ -2005,13 +2020,60 @@ clara sobre lo consultado, responde únicamente la palabra NO_ENCONTRADO.
 Al final, lista las URLs oficiales que usaste, una por línea, con el prefijo 'FUENTE: '."""
 
 
-def buscar_en_fuentes_oficiales(pregunta: str):
-    """Devuelve (texto_oficial, [urls]). Si no aplica, falla o no encuentra
-    nada, devuelve ('', []). Nunca rompe la app."""
-    if not st.session_state.get("buscar_oficial", True):
-        return "", []
-    if not PATRON_TEMA_OFICIAL.search(_normalizar(pregunta)):
-        return "", []
+# Palabras (sin tildes) que indican que vale la pena buscar en internet aunque
+# no sea un tema tributario (datos recientes, programas contables, precios...)
+PATRON_TEMA_WEB = re.compile(
+    r"\b(quien es|quien fue|quienes son|cuando (?:fue|es|sera|se)|donde (?:queda|esta|puedo)|"
+    r"noticia\w*|ultim\w*|reciente\w*|precio\w*|cuanto (?:cuesta|vale)|"
+    r"contifico|alegra|facturero|software|tutorial|202\d)\b"
+)
+
+
+def es_url_oficial(url: str) -> bool:
+    anfitrion = re.sub(r"^https?://", "", url).split("/")[0].lower()
+    return any(anfitrion == d or anfitrion.endswith("." + d) for d in DOMINIOS_OFICIALES)
+
+
+def _consultar_tavily(consulta: str, dominios=None, profundidad: str = "basic"):
+    """Busca en internet con Tavily (buscador hecho para IAs). Con 'dominios'
+    limita la búsqueda a esos sitios. Devuelve None si no hay clave configurada."""
+    clave = st.secrets.get("TAVILY_API_KEY")
+    if not clave:
+        return None
+    import requests
+    cuerpo = {
+        "query": consulta,
+        "search_depth": profundidad,
+        "max_results": 5,
+        "include_answer": False,
+    }
+    if dominios:
+        cuerpo["include_domains"] = dominios
+    respuesta = requests.post(
+        "https://api.tavily.com/search",
+        json=cuerpo,
+        headers={"Authorization": f"Bearer {clave}"},
+        timeout=25,
+    )
+    respuesta.raise_for_status()
+    return respuesta.json().get("results", [])
+
+
+def _formatear_resultados(resultados: list, limite_caracteres: int = 700):
+    """Convierte los resultados de la búsqueda en texto para la IA + lista de URLs."""
+    bloques, urls = [], []
+    for i, r in enumerate(resultados, start=1):
+        url = r.get("url", "")
+        contenido = re.sub(r"\s+", " ", r.get("content", "") or "").strip()[:limite_caracteres]
+        bloques.append(f"[{i}] {r.get('title', '(sin título)')} — {url}\n{contenido}")
+        if url and url not in urls:
+            urls.append(url)
+    return "\n\n".join(bloques), urls
+
+
+def _buscar_con_groq_compound(pregunta: str):
+    """Plan B (si no hay clave de Tavily): búsqueda integrada de Groq. Puede no
+    estar disponible en todas las cuentas; si falla, devuelve ('', [])."""
     try:
         respuesta = client.chat.completions.create(
             model=MODELO_BUSQUEDA,
@@ -2023,24 +2085,78 @@ def buscar_en_fuentes_oficiales(pregunta: str):
         )
         texto = (respuesta.choices[0].message.content or "").strip()
     except Exception as e:
-        st.session_state.busqueda_estado = f"⚠️ No disponible ({type(e).__name__})"
+        st.session_state.busqueda_estado = (
+            f"⚠️ Búsqueda no disponible ({type(e).__name__}). "
+            "Agrega TAVILY_API_KEY en Secrets para activarla."
+        )
         return "", []
-
     if not texto or "NO_ENCONTRADO" in texto.upper():
         st.session_state.busqueda_estado = "🔎 Sin resultados oficiales en la última consulta"
         return "", []
-
-    # Solo dejamos enlaces que realmente sean de dominios oficiales
     urls = []
     for candidata in re.findall(r"https?://[^\s)\]>\"']+", texto):
         candidata = candidata.rstrip(".,;:")
-        anfitrion = re.sub(r"^https?://", "", candidata).split("/")[0].lower()
-        if any(anfitrion == d or anfitrion.endswith("." + d) for d in DOMINIOS_OFICIALES):
-            if candidata not in urls:
-                urls.append(candidata)
+        if es_url_oficial(candidata) and candidata not in urls:
+            urls.append(candidata)
+    st.session_state.busqueda_estado = "✅ Consulta oficial exitosa (Groq)"
+    return (
+        "INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET (sitios oficiales del Ecuador, "
+        f"consultada hoy):\n{texto}",
+        urls[:4],
+    )
 
-    st.session_state.busqueda_estado = "✅ Consulta oficial exitosa"
-    return texto, urls[:4]
+
+def buscar_en_internet(pregunta: str):
+    """Devuelve (texto_para_la_IA, [urls]). Estrategia:
+    1) Si la pregunta es tributaria/legal: primero SOLO sitios oficiales.
+    2) Si eso no da resultados (o la pregunta es de otro tipo pero pide datos
+       recientes): búsqueda abierta, avisando que las fuentes no son oficiales.
+    Nunca rompe la app: si algo falla, devuelve ('', [])."""
+    if not st.session_state.get("buscar_oficial", True):
+        return "", []
+    norm = _normalizar(pregunta)
+    if len(norm.split()) < 3:
+        return "", []
+    es_tributario = bool(PATRON_TEMA_OFICIAL.search(norm))
+    if not (es_tributario or PATRON_TEMA_WEB.search(norm)):
+        return "", []
+
+    if not st.secrets.get("TAVILY_API_KEY"):
+        if es_tributario:
+            return _buscar_con_groq_compound(pregunta)
+        st.session_state.busqueda_estado = "⚙️ Falta TAVILY_API_KEY en Secrets para buscar en internet"
+        return "", []
+
+    consulta = pregunta if "ecuador" in norm else f"{pregunta} Ecuador"
+    try:
+        resultados, oficial = [], False
+        if es_tributario:
+            resultados = _consultar_tavily(consulta, DOMINIOS_OFICIALES, "advanced") or []
+            oficial = bool(resultados)
+        if not resultados:
+            resultados = _consultar_tavily(consulta if es_tributario else pregunta, None, "basic") or []
+    except Exception as e:
+        st.session_state.busqueda_estado = f"⚠️ Búsqueda falló ({type(e).__name__})"
+        return "", []
+
+    if not resultados:
+        st.session_state.busqueda_estado = "🔎 Sin resultados en la última consulta"
+        return "", []
+
+    cuerpo, urls = _formatear_resultados(resultados)
+    if oficial:
+        encabezado = (
+            "INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET (sitios oficiales del Ecuador, "
+            "consultada hoy):"
+        )
+        st.session_state.busqueda_estado = "✅ Consulta en sitios oficiales exitosa"
+    else:
+        encabezado = (
+            "INFORMACIÓN ENCONTRADA EN INTERNET (fuentes NO oficiales, consultada hoy; si el "
+            "tema es tributario o legal, avísale al estudiante que la verifique en la fuente oficial):"
+        )
+        st.session_state.busqueda_estado = "✅ Consulta en internet exitosa (fuentes no oficiales)"
+    return f"{encabezado}\n{cuerpo}", urls
 
 
 def transcribir_audio(audio_bytes: bytes):
