@@ -39,7 +39,7 @@ def mostrar_tabla(df: pd.DataFrame):
 # MATERIAL DE CLASE SUBIDO POR LOS DOCENTES
 # Los docentes NO suben archivos desde la app (eso requeriría una base de
 # datos); en vez de eso, suben sus archivos directamente a la carpeta
-# "material_docentes/" del repositorio de GitHub, y Contín los lee solo
+# "material_docentes/" del repositorio de GitHub, y PoConta los lee solo
 # al arrancar. Soporta: .txt, .md, .xlsx/.xls, .pdf, .pptx
 # Esto se carga AL INICIO del archivo (antes que todo lo demás) porque
 # tanto la barra lateral como el prompt del sistema lo necesitan.
@@ -51,7 +51,7 @@ LARGO_MAXIMO_MATERIAL = 6000  # límite total de caracteres para no disparar el 
 @st.cache_data(show_spinner=False)
 def cargar_material_docentes():
     """Lee todos los archivos de la carpeta material_docentes/ y arma un
-    texto resumido para dárselo a Contín como referencia extra. Si un
+    texto resumido para dárselo a PoConta como referencia extra. Si un
     archivo falla al leerse, simplemente se lo salta (no rompe la app).
     El espacio disponible se REPARTE en partes iguales entre los archivos,
     así ninguno se queda sin aparecer."""
@@ -124,7 +124,7 @@ def cargar_material_docentes():
 MATERIAL_DOCENTES_TEXTO, MATERIAL_DOCENTES_ARCHIVOS = cargar_material_docentes()
 
 # ---------------------------------------------------------
-# FRASE DE RESPALDO: lo que dice Contín cuando NO tiene información
+# FRASE DE RESPALDO: lo que dice PoConta cuando NO tiene información
 # suficiente (en vez de un seco "no sé"). Cuando la dice, el panda guiña
 # el ojo y le sale un corazón de la boca.
 # ---------------------------------------------------------
@@ -138,7 +138,7 @@ MARCA_SIN_CONOCIMIENTO = "mi creador está trabajando duro"
 # ---------------------------------------------------------
 # VIDEOS DE YOUTUBE COMO FUENTE (para Excel, fórmulas y programas contables)
 # Los videos se listan en el archivo "fuentes_youtube.txt" (una línea por
-# video, con el formato:  URL | tema). Contín descarga la transcripción de
+# video, con el formato:  URL | tema). PoConta descarga la transcripción de
 # cada video (si YouTube lo permite) y, ante cada pregunta, usa SOLO los
 # trozos más parecidos a lo que se preguntó, citando el enlace.
 # OJO: los videos sirven para "cómo se hace en Excel/programa", NO para
@@ -266,7 +266,7 @@ def buscar_videos_relevantes(pregunta: str):
 # CONFIGURACIÓN GENERAL DE LA PÁGINA
 # =========================================================
 st.set_page_config(
-    page_title="Contín - Tu Tutor de Contabilidad",
+    page_title="PoConta - Tu Tutor de Contabilidad",
     page_icon="🐼",
     layout="centered"
 )
@@ -442,10 +442,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🐼 Contín, tu asistente contable de confianza")
+st.title("🐼 PoConta, tu asistente contable de confianza")
 
 # ---------------------------------------------------------
-# MASCOTA: Contín, el osito panda contable 🐼🎋
+# MASCOTA: PoConta, el osito panda contable 🐼🎋
 # Cambia de cara según el momento: pensando, hablando, feliz,
 # bailando o cantando. Siempre lleva su hojita de bambú.
 # ---------------------------------------------------------
@@ -651,7 +651,7 @@ def lanzar_confeti():
 
 
 def escribir_con_efecto_maquina(texto: str, placeholder=None):
-    """Muestra el texto poco a poco, como si Contín lo estuviera escribiendo
+    """Muestra el texto poco a poco, como si PoConta lo estuviera escribiendo
     en vivo. Si el texto es muy largo, acelera para no hacer esperar de más."""
     if placeholder is None:
         placeholder = st.empty()
@@ -697,7 +697,7 @@ def calcular_tir(flujos: list):
 
 
 def limpiar_para_voz(texto: str) -> str:
-    """Prepara el texto de Contín para leerlo en voz alta: quita símbolos de
+    """Prepara el texto de PoConta para leerlo en voz alta: quita símbolos de
     Markdown (asteriscos, gatos, barras, etc.) y reemplaza las tablas por una
     frase corta, para que no suene raro al escucharlo."""
     lineas = texto.split("\n")
@@ -802,9 +802,9 @@ def generar_quiz(tema_contexto: str):
 
 def boton_generar_quiz(texto_contexto: str, key_sufijo: str):
     """Botón reutilizable que aparece después de una respuesta o en la
-    barra lateral, para pedirle a Contín un quiz sobre ese tema."""
+    barra lateral, para pedirle a PoConta un quiz sobre ese tema."""
     if st.button("🎯 Hazme un quiz de esto", key=f"quiz_btn_{key_sufijo}"):
-        with st.spinner("Contín está armando tu quiz..."):
+        with st.spinner("PoConta está armando tu quiz..."):
             preguntas = generar_quiz(texto_contexto)
         if preguntas:
             st.session_state.quiz_id = st.session_state.get("quiz_id", 0) + 1
@@ -813,7 +813,7 @@ def boton_generar_quiz(texto_contexto: str, key_sufijo: str):
 
 
 def boton_explicar_mas_facil(key_sufijo: str):
-    """Botón que le pide a Contín que reexplique su última respuesta de
+    """Botón que le pide a PoConta que reexplique su última respuesta de
     forma más sencilla, sin que el estudiante tenga que reescribir nada."""
     if st.button("🔁 Explícamelo más fácil", key=f"facil_btn_{key_sufijo}"):
         responder_pregunta(
@@ -952,7 +952,7 @@ st.markdown(
         100% {{ opacity: 0; transform: translate(var(--dx, 0px), -70px) scale(1.15); }}
     }}
 
-    /* ---------- Contín bailando 🕺 ---------- */
+    /* ---------- PoConta bailando 🕺 ---------- */
     .mascota-bailando {{
         animation: bailar 0.8s ease-in-out infinite !important;
     }}
@@ -964,7 +964,7 @@ st.markdown(
         100% {{ transform: translateX(0) rotate(-6deg); }}
     }}
 
-    /* ---------- Contín flotante: siempre visible, sin importar el scroll ---------- */
+    /* ---------- PoConta flotante: siempre visible, sin importar el scroll ---------- */
     .mascota-flotante {{
         position: fixed;
         top: 78px;
@@ -1015,7 +1015,7 @@ st.markdown(
         color: transparent !important;
     }}
 
-    /* ---------- ✨ Aura pulsante verde alrededor de Contín ---------- */
+    /* ---------- ✨ Aura pulsante verde alrededor de PoConta ---------- */
     .mascota-flotante {{
         animation: aura-pulso 3.2s ease-in-out infinite;
     }}
@@ -1075,7 +1075,7 @@ st.markdown(
 )
 
 st.write(
-    "¡Hola! Qué gusto tenerte por aquí 😊 Soy **Contín**, y estoy para ayudarte a "
+    "¡Hola! Qué gusto tenerte por aquí 😊 Soy **PoConta**, y estoy para ayudarte a "
     "entender contabilidad sin agobios ni tecnicismos raros. Aquí puedes preguntar "
     "lo que sea, las veces que necesites — para eso estoy. Elige tu nivel en el panel "
     "de la izquierda y cuéntame en qué andas."
@@ -1101,7 +1101,7 @@ MODEL_NAME = "openai/gpt-oss-120b"
 MODEL_TRANSCRIPCION = "whisper-large-v3-turbo"
 
 # Cuántos mensajes recientes se reenvían a la IA en cada pregunta.
-# Mientras más alto, más "memoria" tiene Contín, pero más tokens gasta
+# Mientras más alto, más "memoria" tiene PoConta, pero más tokens gasta
 # (y antes llegas al límite gratuito de Groq).
 MAX_MENSAJES_HISTORIAL = 10
 
@@ -1117,11 +1117,20 @@ with st.sidebar:
     modo_proyeccion_nuevo = st.toggle(
         "🔍 Modo proyección (letra grande)",
         value=st.session_state.modo_proyeccion,
-        help="Para cuando el profesor proyecta Contín frente a toda la clase.",
+        help="Para cuando el profesor proyecta PoConta frente a toda la clase.",
     )
     if modo_proyeccion_nuevo != st.session_state.modo_proyeccion:
         st.session_state.modo_proyeccion = modo_proyeccion_nuevo
         st.rerun()
+
+    st.session_state.buscar_oficial = st.toggle(
+        "🌐 Buscar en fuentes oficiales (SRI, IESS...)",
+        value=st.session_state.get("buscar_oficial", True),
+        help="Para preguntas de leyes, beneficios, retenciones y datos tributarios, "
+             "consulta sitios oficiales del Ecuador. Apágalo si llegas al límite de uso gratuito.",
+    )
+    if st.session_state.get("busqueda_estado"):
+        st.caption(st.session_state.busqueda_estado)
 
     nivel = st.radio(
         "Selecciona tu nivel:",
@@ -1241,7 +1250,7 @@ if "modo_voz" not in st.session_state:
 
 # ---------------------------------------------------------
 # MODO PROYECCIÓN: letra más grande y algunos elementos más
-# visibles, pensado para cuando se proyecta Contín en el pizarrón.
+# visibles, pensado para cuando se proyecta PoConta en el pizarrón.
 # ---------------------------------------------------------
 if st.session_state.modo_proyeccion:
     st.markdown(
@@ -1400,9 +1409,12 @@ FECHA_ACTUAL_TEXTO = (
 )
 
 SYSTEM_PROMPT = f"""
-Eres "Contín", un tutor virtual de Contabilidad para estudiantes de Bachillerato
-Técnico en Ecuador. Tu imagen es la de un osito panda tierno que lleva una hojita
-de bambú. Tu personalidad es cercana, cálida y de mucha confianza:
+Eres "PoConta", un tutor virtual de Contabilidad para estudiantes de Bachillerato
+Técnico en Ecuador. Tu nombre es PoConta: "Po" de panda y "Conta" de contabilidad,
+porque eres un panda que enseña contabilidad. Tu imagen es la de un osito panda tierno que lleva una hojita
+de bambú. Eres alegre, entusiasta y divertido: puedes hacer algún chiste ligero
+de bambú o de pandas de vez en cuando, sin abusar y sin dejar de enseñar bien.
+Tu personalidad es cercana, cálida y de mucha confianza:
 hablas como un amigo mayor que sabe de contabilidad y disfruta enseñar, nunca
 como un robot ni con lenguaje frío o excesivamente técnico. Usa un tono
 motivador, cercano, con calidez ecuatoriana, pero siempre respetuoso (nunca
@@ -1425,6 +1437,29 @@ TEMAS PRIORITARIOS PARA ESTE NIVEL:
 
 Puedes ayudar con temas de otros niveles si el estudiante lo pide explícitamente,
 pero por defecto enfoca tus explicaciones y ejemplos en el nivel indicado arriba.
+
+FORMATO DE TUS RESPUESTAS (muy importante):
+- Por defecto responde con texto natural: párrafos cortos y conversacionales, como
+  un amigo explicando. Puedes usar negritas para lo clave y, si ayuda, una lista
+  breve. NO uses tablas ni cuadros comparativos para explicar conceptos, leyes,
+  beneficios tributarios, definiciones ni información general: se siente aburrido.
+- Usa tablas SOLO en estos casos: (a) el estudiante te pide explícitamente una
+  tabla o un cuadro comparativo; (b) es un ejercicio numérico o de fórmulas:
+  asientos del Libro Diario, mayorización, balances, kardex, retenciones o IVA
+  calculados, depreciaciones, análisis horizontal/vertical, etc.
+- Aun en esos casos, piénsalo antes: si una tabla no hace la respuesta más clara,
+  no la uses.
+
+INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET:
+A veces, junto a la pregunta, recibirás un bloque "INFORMACIÓN OFICIAL ENCONTRADA
+EN INTERNET", buscada hoy en sitios oficiales del Ecuador (SRI, IESS, Ministerio
+de Trabajo, Superintendencia de Compañías, Asamblea, Registro Oficial, etc.).
+Para leyes, beneficios, reformas, plazos y requisitos, basa tu respuesta en ese
+bloque, explícalo en tus palabras y con calidez, e indica el nombre de la norma y
+su fecha si aparecen. Si contradice tu tabla de retenciones, dile al estudiante
+que verifique en www.sri.gob.ec. Si el estudiante menciona una ley, beneficio o
+norma que no reconoces y no recibiste ese bloque, NO adivines ni la reinterpretes:
+usa la frase de respaldo.
 
 CÓMO DEBES RESPONDER A DUDAS Y REGISTROS EN LIBROS CONTABLES:
 1. Si el estudiante te pide ayuda para registrar una transacción SIN retenciones:
@@ -1482,7 +1517,7 @@ Al final de ese tipo de consejos (SOLO en temas personales/de vida, NO en temas 
 contabilidad), agrega en una línea aparte, en letra pequeña/discreta usando
 formato Markdown en cursiva, algo como:
 
-*Contín es una IA y puede cometer errores; para temas importantes, habla también con alguien de confianza.*
+*PoConta es una IA y puede cometer errores; para temas importantes, habla también con alguien de confianza.*
 
 Puedes variar un poco la redacción de ese aviso, pero siempre debe transmitir que
 eres una IA, que puedes equivocarte, y que ese consejo no reemplaza a un profesional
@@ -1719,7 +1754,7 @@ def generar_excel_desde_tablas(tablas):
 def generar_excel_con_original(tablas, bytes_originales: bytes):
     """Igual que generar_excel_desde_tablas, PERO en vez de crear un libro
     en blanco, parte del Excel que subió el estudiante y le AGREGA hojas
-    nuevas con la solución de Contín — así el archivo descargable es el
+    nuevas con la solución de PoConta — así el archivo descargable es el
     mismo que subió, más la resolución, en vez de uno completamente nuevo."""
     import openpyxl
 
@@ -1731,7 +1766,7 @@ def generar_excel_con_original(tablas, bytes_originales: bytes):
         return generar_excel_desde_tablas(tablas)
 
     for idx, df in enumerate(tablas, start=1):
-        nombre_base = f"Solución Contín {idx}"[:31]
+        nombre_base = f"Solución PoConta {idx}"[:31]
         nombre_hoja = nombre_base
         contador = 1
         while nombre_hoja in libro.sheetnames:
@@ -1774,7 +1809,7 @@ def responder_pregunta(
                      PERO no se muestra en el chat, para no llenar la pantalla de datos crudos.
     """
     # Detecta si el estudiante se está despidiendo agradecido, para que
-    # Contín se ponga feliz y celebre con confeti 🎉
+    # PoConta se ponga feliz y celebre con confeti 🎉
     es_agradecimiento = bool(PATRON_AGRADECIMIENTO.search(texto_mostrado))
 
     # Detecta si le está pidiendo que cante, para sacar el micrófono 🎤
@@ -1797,7 +1832,7 @@ def responder_pregunta(
     mensaje_para_ia = f"{contexto_extra}\n\nInstrucción del estudiante: {texto_mostrado}" if contexto_extra else texto_mostrado
 
     with st.chat_message("assistant", avatar="🐼"):
-        with st.spinner("Contín está pensando cómo explicarte esto..."):
+        with st.spinner("PoConta está pensando cómo explicarte esto..."):
             try:
                 # Agregamos el mensaje del estudiante al historial de la IA
                 st.session_state.historial_ia.append({"role": "user", "content": mensaje_para_ia})
@@ -1807,12 +1842,25 @@ def responder_pregunta(
                 # historial) para no gastar tokens en preguntas siguientes.
                 contexto_videos, fuentes_videos = buscar_videos_relevantes(texto_mostrado)
 
+                # Y, si la pregunta es tributaria/legal, consultamos fuentes oficiales
+                contexto_oficial, fuentes_oficiales = buscar_en_fuentes_oficiales(texto_mostrado)
+
+                bloques_extra = []
+                if contexto_oficial:
+                    bloques_extra.append(
+                        "INFORMACIÓN OFICIAL ENCONTRADA EN INTERNET (sitios oficiales del "
+                        f"Ecuador, consultada hoy):\n{contexto_oficial}"
+                    )
+                if contexto_videos:
+                    bloques_extra.append(contexto_videos)
+                contexto_extra_ia = "\n\n".join(bloques_extra)
+
                 # Solo mandamos los últimos mensajes (no todo el historial)
                 # para no gastar tokens de más ni chocar con el límite gratuito.
                 historial_reciente = st.session_state.historial_ia[-MAX_MENSAJES_HISTORIAL:]
-                if contexto_videos:
+                if contexto_extra_ia:
                     historial_reciente = historial_reciente[:-1] + [
-                        {"role": "user", "content": f"{contexto_videos}\n\n{mensaje_para_ia}"}
+                        {"role": "user", "content": f"{contexto_extra_ia}\n\n{mensaje_para_ia}"}
                     ]
                 mensajes_para_groq = (
                     [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -1829,9 +1877,12 @@ def responder_pregunta(
 
                 # Si se usaron videos de YouTube, dejamos los enlaces a la vista
                 texto_final = texto_respuesta
+                if fuentes_oficiales:
+                    enlaces_of = "  \n".join(f"🏛️ {url}" for url in fuentes_oficiales)
+                    texto_final += f"\n\n**Fuentes oficiales consultadas:**  \n{enlaces_of}"
                 if fuentes_videos:
                     enlaces = "  \n".join(f"🎥 [{tema}]({url})" for tema, url in fuentes_videos)
-                    texto_final = f"{texto_respuesta}\n\n**Videos de referencia:**  \n{enlaces}"
+                    texto_final += f"\n\n**Videos de referencia:**  \n{enlaces}"
 
                 escribir_con_efecto_maquina(texto_final)
                 st.session_state.messages.append(
@@ -1843,7 +1894,7 @@ def responder_pregunta(
                     nuevo_estado = "cantando"
                 elif es_agradecimiento or MARCA_SIN_CONOCIMIENTO in texto_respuesta.lower():
                     # Guiño + corazoncito rojo: cuando le dan las gracias, dicen
-                    # que ya entendieron, o cuando Contín usa su frase de respaldo.
+                    # que ya entendieron, o cuando PoConta usa su frase de respaldo.
                     nuevo_estado = "guinando"
                 else:
                     nuevo_estado = "hablando"
@@ -1854,7 +1905,7 @@ def responder_pregunta(
                 if es_agradecimiento:
                     lanzar_confeti()
 
-                # Si el modo conversación por voz está activo, Contín lee su respuesta en voz alta
+                # Si el modo conversación por voz está activo, PoConta lee su respuesta en voz alta
                 if st.session_state.get("modo_voz"):
                     hablar_texto(texto_respuesta)
 
@@ -1873,7 +1924,7 @@ def responder_pregunta(
                     st.download_button(
                         etiqueta_boton,
                         data=excel_bytes,
-                        file_name=(excel_original_nombre or "contin_resultado.xlsx"),
+                        file_name=(excel_original_nombre or "poconta_resultado.xlsx"),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key=f"descarga_{len(st.session_state.messages)}",
                     )
@@ -1912,6 +1963,86 @@ def responder_pregunta(
                     st.error(f"Ocurrió un error inesperado: {error_msg}")
 
 
+# ---------------------------------------------------------
+# BÚSQUEDA EN FUENTES OFICIALES 🌐 (se actualiza sola)
+# Cuando la pregunta es tributaria/legal (leyes, beneficios, retenciones,
+# IESS, sueldos, plazos...), PoConta consulta en internet SOLO sitios oficiales
+# del Ecuador, usando el modelo "groq/compound" de Groq, que trae búsqueda web
+# integrada y permite limitarla a ciertos dominios. Si la búsqueda falla o no
+# encuentra nada, el chat sigue funcionando con normalidad.
+# ---------------------------------------------------------
+DOMINIOS_OFICIALES = [
+    "sri.gob.ec",
+    "iess.gob.ec",
+    "trabajo.gob.ec",
+    "supercias.gob.ec",
+    "asambleanacional.gob.ec",
+    "registroficial.gob.ec",
+    "finanzas.gob.ec",
+    "aduana.gob.ec",
+    "presidencia.gob.ec",
+]
+MODELO_BUSQUEDA = "groq/compound"
+
+# Palabras (sin tildes) que indican que la pregunta necesita datos oficiales al día
+PATRON_TEMA_OFICIAL = re.compile(
+    r"\b(tribut\w*|impuest\w*|iva|renta|sri|leyes?|reforma\w*|beneficio\w*|"
+    r"exoner\w*|exenci\w*|deduci\w*|deducibl\w*|incentiv\w*|retencion\w*|rimpe|"
+    r"iess|salario\w*|sbu|decimo\w*|utilidades|anticipo\w*|declaraci\w*|"
+    r"formulario\w*|resoluci\w*|normativ\w*|niif|superintendencia|reglamento|"
+    r"decreto|vigente|actualiz\w*|multas?|sancion\w*|ruc|comprobante\w*|"
+    r"ice|isd|arancel\w*|aduana|codigo|cotizaci\w*|aporte\w*|jubilaci\w*)\b"
+)
+
+PROMPT_BUSQUEDA_OFICIAL = """Eres un investigador tributario y contable de Ecuador.
+Busca la respuesta SOLO en fuentes oficiales (tu búsqueda está limitada a sitios
+oficiales del Estado ecuatoriano). Responde en español, de forma breve y exacta
+(máximo 250 palabras): nombre exacto de la ley, reglamento o resolución, número y
+fecha de publicación, qué establece, quiénes pueden acceder, porcentajes, plazos y
+requisitos, y si sigue vigente. Si el consultante usa un nombre coloquial, busca la
+norma a la que se refiere. NO inventes nada: si no encuentras información oficial
+clara sobre lo consultado, responde únicamente la palabra NO_ENCONTRADO.
+Al final, lista las URLs oficiales que usaste, una por línea, con el prefijo 'FUENTE: '."""
+
+
+def buscar_en_fuentes_oficiales(pregunta: str):
+    """Devuelve (texto_oficial, [urls]). Si no aplica, falla o no encuentra
+    nada, devuelve ('', []). Nunca rompe la app."""
+    if not st.session_state.get("buscar_oficial", True):
+        return "", []
+    if not PATRON_TEMA_OFICIAL.search(_normalizar(pregunta)):
+        return "", []
+    try:
+        respuesta = client.chat.completions.create(
+            model=MODELO_BUSQUEDA,
+            messages=[
+                {"role": "system", "content": PROMPT_BUSQUEDA_OFICIAL},
+                {"role": "user", "content": f"Fecha de hoy: {FECHA_ACTUAL_TEXTO}.\nConsulta: {pregunta}"},
+            ],
+            extra_body={"search_settings": {"include_domains": DOMINIOS_OFICIALES}},
+        )
+        texto = (respuesta.choices[0].message.content or "").strip()
+    except Exception as e:
+        st.session_state.busqueda_estado = f"⚠️ No disponible ({type(e).__name__})"
+        return "", []
+
+    if not texto or "NO_ENCONTRADO" in texto.upper():
+        st.session_state.busqueda_estado = "🔎 Sin resultados oficiales en la última consulta"
+        return "", []
+
+    # Solo dejamos enlaces que realmente sean de dominios oficiales
+    urls = []
+    for candidata in re.findall(r"https?://[^\s)\]>\"']+", texto):
+        candidata = candidata.rstrip(".,;:")
+        anfitrion = re.sub(r"^https?://", "", candidata).split("/")[0].lower()
+        if any(anfitrion == d or anfitrion.endswith("." + d) for d in DOMINIOS_OFICIALES):
+            if candidata not in urls:
+                urls.append(candidata)
+
+    st.session_state.busqueda_estado = "✅ Consulta oficial exitosa"
+    return texto, urls[:4]
+
+
 def transcribir_audio(audio_bytes: bytes):
     """Envía el audio grabado al modelo Whisper de Groq para transcribirlo a
     texto en español (Whisper es un modelo especializado solo para esto,
@@ -1948,7 +2079,7 @@ for idx, message in enumerate(st.session_state.messages):
                 st.download_button(
                     "📥 Descargar esta respuesta en Excel",
                     data=generar_excel_desde_tablas(tablas_previas),
-                    file_name="contin_resultado.xlsx",
+                    file_name="poconta_resultado.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"descarga_historial_{idx}",
                 )
@@ -1973,7 +2104,7 @@ with col_mas:
     with st.popover("➕"):
         st.caption("Más opciones")
 
-        if st.button("🕺 ¡Que baile Contín!" if not st.session_state.bailando else "⏹️ Parar de bailar"):
+        if st.button("🕺 ¡Que baile PoConta!" if not st.session_state.bailando else "⏹️ Parar de bailar"):
             st.session_state.bailando = not st.session_state.bailando
             st.rerun()
 
@@ -1983,7 +2114,7 @@ with col_mas:
                 contexto_quiz = "\n".join(f"{m['role']}: {m['content']}" for m in ultimos)
             else:
                 contexto_quiz = f"Conceptos generales de contabilidad de {nivel}."
-            with st.spinner("Contín está armando tu quiz..."):
+            with st.spinner("PoConta está armando tu quiz..."):
                 preguntas = generar_quiz(contexto_quiz)
             if preguntas:
                 st.session_state.quiz_id = st.session_state.get("quiz_id", 0) + 1
