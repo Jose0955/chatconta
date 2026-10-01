@@ -9,6 +9,7 @@ import json
 import time
 import random
 import unicodedata
+from motor_ia import responder as _responder_ia
 import streamlit.components.v1 as components
 from openpyxl.styles import Font
 
@@ -1162,45 +1163,21 @@ def _guardar_memoria(clave: str, texto: str, oficiales: list, videos: list):
     memoria[clave] = {"texto": texto, "oficiales": oficiales, "videos": videos, "ts": time.time()}
 
 
-def llamar_ia(mensajes: list, max_tokens: int = 1500) -> str:
-    """Pregunta a la IA probando los modelos de MODELOS_CHAT en orden. Salta al
-    siguiente si hay límite de uso (429), petición demasiado grande (413),
-    modelo no disponible (404) o respuesta vacía. Cualquier otro error se
-    muestra tal cual."""
+def llamar_ia(mensajes: list, max_tokens: int = 1500, herramientas: bool = False) -> str:
+    """Pregunta a la IA con la cadena de modelos (ver motor_ia.py). Si
+    'herramientas' es True, la IA puede pedir cálculos exactos en Python
+    (IVA, retenciones, depreciación, intereses, VAN/TIR, kárdex)."""
     estado = _estado_del_dia()
-    ultimo_error = None
-    for modelo in MODELOS_CHAT:
-        intentos = [{"reasoning_effort": "low"}, {}] if modelo.startswith("openai/gpt-oss") else [{}]
-        for extra in intentos:
-            try:
-                parametros = dict(model=modelo, messages=mensajes, max_tokens=max_tokens)
-                if extra:
-                    parametros["extra_body"] = extra
-                respuesta = client.chat.completions.create(**parametros)
-                texto = (respuesta.choices[0].message.content or "").strip()
-                if not texto:
-                    ultimo_error = RuntimeError("respuesta vacía")
-                    break  # probamos el siguiente modelo
-                estado["preguntas"] += 1
-                estado["por_modelo"][modelo] = estado["por_modelo"].get(modelo, 0) + 1
-                st.session_state.modelo_usado = modelo
-                return texto
-            except Exception as e:
-                ultimo_error = e
-                msg = str(e).lower()
-                if extra and "reasoning" in msg:
-                    continue  # ese modelo no acepta reasoning_effort: reintenta sin él
-                recuperable = any(
-                    s in msg for s in (
-                        "429", "rate_limit", "rate limit", "413", "too large",
-                        "404", "model_not_found", "decommissioned", "does not exist", "not found",
-                    )
-                )
-                if recuperable:
-                    estado["avisos_limite"] += 1
-                    break  # siguiente modelo
-                raise
-    raise ultimo_error if ultimo_error else RuntimeError("Sin modelos disponibles")
+    texto, info = _responder_ia(
+        client, mensajes, MODELOS_CHAT, usar_herramientas=herramientas, max_tokens=max_tokens
+    )
+    estado["preguntas"] += 1
+    estado["avisos_limite"] += info["avisos"]
+    if info["modelo"]:
+        estado["por_modelo"][info["modelo"]] = estado["por_modelo"].get(info["modelo"], 0) + 1
+    st.session_state.modelo_usado = info["modelo"]
+    st.session_state.herramientas_turno = info["herramientas"]
+    return texto
 
 
 # Cuántos mensajes recientes se reenvían a la IA en cada pregunta.
@@ -1527,6 +1504,57 @@ FECHA_ACTUAL_TEXTO = (
 # (~1,700 tokens) y la tabla de retenciones y el material de los docentes se
 # agregan SOLO cuando la conversación trata de eso.
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# BASE DE CONOCIMIENTO VERIFICADA 📚
+# Carpeta "base_conocimiento/": archivos .md con temas tributarios/contables ya
+# comprobados (tablas, porcentajes, reglas, fuente y fecha de verificación).
+# Sirve para lo que un buscador NO puede traer bien, como tablas que en el
+# Registro Oficial están como imagen. PoConta la consulta ANTES que internet.
+# ---------------------------------------------------------
+CARPETA_BASE_CONOCIMIENTO = "base_conocimiento"
+
+
+@st.cache_data(show_spinner=False)
+def cargar_base_conocimiento():
+    entradas = []
+    if not os.path.isdir(CARPETA_BASE_CONOCIMIENTO):
+        return entradas
+    for nombre in sorted(os.listdir(CARPETA_BASE_CONOCIMIENTO)):
+        if not nombre.lower().endswith((".md", ".txt")) or nombre.upper().startswith("README"):
+            continue
+        try:
+            with open(os.path.join(CARPETA_BASE_CONOCIMIENTO, nombre), "r", encoding="utf-8", errors="ignore") as f:
+                lineas = f.read().splitlines()
+        except Exception:
+            continue
+        palabras, cuerpo = [], []
+        for linea in lineas:
+            if linea.strip().upper().startswith("PALABRAS:"):
+                palabras = [_normalizar(p.strip()) for p in linea.split(":", 1)[1].split(",") if p.strip()]
+            else:
+                cuerpo.append(linea)
+        if palabras and cuerpo:
+            entradas.append({"archivo": nombre, "palabras": palabras, "texto": "\n".join(cuerpo).strip()})
+    return entradas
+
+
+def buscar_en_base_conocimiento(consulta: str, maximo: int = 2, limite: int = 3500):
+    """Devuelve (texto, [archivos]) con los temas verificados que coinciden con
+    las palabras clave de la consulta. ('', []) si ninguno coincide."""
+    norm = _normalizar(consulta)
+    coincidencias = []
+    for e in cargar_base_conocimiento():
+        puntaje = sum(1 for k in e["palabras"] if k in norm)
+        if puntaje:
+            coincidencias.append((puntaje, e))
+    coincidencias.sort(key=lambda c: c[0], reverse=True)
+    elegidas = [e for _, e in coincidencias[:maximo]]
+    if not elegidas:
+        return "", []
+    texto = "\n\n".join(e["texto"][:limite] for e in elegidas)
+    return texto, [e["archivo"] for e in elegidas]
+
+
 PATRON_RETENCIONES = re.compile(
     r"\b(retenc\w*|iva|renta|sri|impuest\w*|tribut\w*|factura\w*|comprobante\w*|"
     r"rimpe|agente\w*|contribuyente\w*|liquidacion\w*|proveedor\w*|declaraci\w*)\b"
@@ -1549,7 +1577,20 @@ def material_relevante(texto_consulta: str, limite: int = 2200) -> str:
     return "\n...\n".join(elegidos)[:limite]
 
 
-def construir_system_prompt(consulta: str) -> str:
+PATRON_CALCULO = re.compile(
+    r"\b(calcul\w*|asiento\w*|deprecia\w*|interes\w*|van|tir|kardex|peps|promedio|retenc\w*|"
+    r"iva|costo\w*|inventario\w*|compra\w*|venta\w*|vend\w*|invert\w*|invers\w*|flujo\w*)\b"
+)
+
+
+def necesita_herramientas(texto: str) -> bool:
+    """Las herramientas de cálculo gastan tokens: solo se ofrecen si la
+    conversación reciente trae números y palabras de cálculo contable."""
+    n = _normalizar(texto)
+    return bool(re.search(r"\d", n)) and bool(PATRON_CALCULO.search(n))
+
+
+def construir_system_prompt(consulta: str, con_herramientas: bool = False) -> str:
     """Arma el prompt del sistema. 'consulta' es el texto reciente del
     estudiante, usado para decidir si hace falta la tabla de retenciones o
     algún trozo del material de los docentes."""
@@ -1590,8 +1631,25 @@ INFORMACIÓN DE INTERNET: a veces recibirás "INFORMACIÓN OFICIAL ENCONTRADA EN
 VIDEOS DE YOUTUBE: a veces recibirás fragmentos de videos (con enlace) sobre Excel o programas contables: úsalos para explicar CÓMO se hace algo paso a paso y menciona el enlace. No son fuente de porcentajes ni leyes (si contradicen la tabla o al docente, gana la tabla o el docente). Solo tienes su texto: no describas imágenes. Sin videos, no inventes enlaces."""
 
     partes = [base]
+    if con_herramientas:
+        partes.append(
+            "CÁLCULOS EXACTOS: tienes herramientas de cálculo (IVA, compra con retenciones, "
+            "depreciación, interés, VAN/TIR, kárdex). Para CUALQUIER cálculo de ese tipo ÚSALAS en vez "
+            "de calcular de cabeza, y presenta los resultados tal cual los devuelven, sin cambiar "
+            "ningún número. Si falta un dato necesario (tipo de proveedor, tipo de bien o servicio, "
+            "método), pregúntalo primero. Si la herramienta devuelve 'notas', menciónalas brevemente. "
+            "El 'asiento_markdown' y la 'tabla_markdown' que devuelven están listos para mostrarse."
+        )
     if PATRON_RETENCIONES.search(_normalizar(consulta)):
         partes.append(TABLA_RETENCIONES)
+    conocimiento, _ = buscar_en_base_conocimiento(consulta)
+    if conocimiento:
+        partes.append(
+            "BASE DE CONOCIMIENTO VERIFICADA (máxima prioridad: úsala por encima de búsquedas en "
+            "internet y de tu memoria; reproduce las tablas tal cual, en tabla Markdown si te las "
+            "piden, e indica la fuente y la fecha de verificación; incluye las advertencias):\n"
+            + conocimiento
+        )
     material = material_relevante(consulta)
     if material:
         partes.append(
@@ -1837,6 +1895,7 @@ def responder_pregunta(
                 # ¿Es una pregunta repetida? Si otro estudiante (o el mismo) ya la hizo
                 # hace poco y no depende de la conversación, reutilizamos la respuesta:
                 # no gasta tokens ni cuenta contra el límite.
+                st.session_state.herramientas_turno = []
                 clave_memoria = None
                 if not contexto_extra and len(st.session_state.historial_ia) == 1:
                     clave_memoria = _clave_memoria(texto_mostrado)
@@ -1854,7 +1913,16 @@ def responder_pregunta(
                     contexto_videos, fuentes_videos = buscar_videos_relevantes(texto_mostrado)
 
                     # Si la pregunta es tributaria/legal o de datos recientes, buscamos en internet
-                    contexto_oficial, fuentes_oficiales = buscar_en_internet(texto_mostrado)
+                    texto_kb, archivos_kb = buscar_en_base_conocimiento(
+                        " ".join(m["content"] for m in st.session_state.messages[-4:] if m["role"] == "user")
+                    )
+                    if texto_kb:
+                        contexto_oficial, fuentes_oficiales = "", []
+                        st.session_state.busqueda_estado_turno = (
+                            "📚 Respondido con la base de conocimiento verificada (" + ", ".join(archivos_kb) + ")"
+                        )
+                    else:
+                        contexto_oficial, fuentes_oficiales = buscar_en_internet(texto_mostrado)
 
                     bloques_extra = []
                     if contexto_oficial:
@@ -1879,12 +1947,13 @@ def responder_pregunta(
                     consulta_prompt = " ".join(
                         m["content"] for m in st.session_state.messages[-4:] if m["role"] == "user"
                     )
+                    usa_herramientas = necesita_herramientas(consulta_prompt)
                     mensajes_para_groq = (
-                        [{"role": "system", "content": construir_system_prompt(consulta_prompt)}]
+                        [{"role": "system", "content": construir_system_prompt(consulta_prompt, usa_herramientas)}]
                         + historial_reciente
                     )
 
-                    texto_respuesta = llamar_ia(mensajes_para_groq)
+                    texto_respuesta = llamar_ia(mensajes_para_groq, herramientas=usa_herramientas)
 
                     if clave_memoria and MARCA_SIN_CONOCIMIENTO not in texto_respuesta.lower():
                         _guardar_memoria(clave_memoria, texto_respuesta, fuentes_oficiales, fuentes_videos)
@@ -1908,6 +1977,11 @@ def responder_pregunta(
                 escribir_con_efecto_maquina(texto_final)
                 if st.session_state.get("busqueda_estado_turno"):
                     st.caption(st.session_state.busqueda_estado_turno)
+                if st.session_state.get("herramientas_turno"):
+                    st.caption(
+                        "🧮 Cálculo exacto hecho con Python (no de cabeza): "
+                        + ", ".join(sorted(set(st.session_state.herramientas_turno)))
+                    )
                 st.session_state.messages.append(
                     {"role": "assistant", "content": texto_final}
                 )
